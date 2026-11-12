@@ -1,0 +1,19 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: light;
+}
+
+html,
+body {
+  @apply bg-slate-50 text-slate-900 antialiased;
+}
+
+/* 移动端表格横向滚动 + 首列冻结（PRD 35.9） */
+@media (max-width: 640px) {
+  .table-scroll {
+    @apply overflow-x-auto;
+  }
+}
