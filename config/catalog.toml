@@ -1,0 +1,146 @@
+# 机器可读的配置目录（PRD 第 32.5 节）
+#
+# 要求：任何新配置项必须同时出现在
+#   1. 本文件
+#   2. .env.example（敏感项）
+#   3. PRD_TDD.md 第 32.4 章对应小节
+#   4. src/aicrypto/config/settings.py 的 Settings 模型
+#
+# CI（tests/unit/test_config_catalog.py）遍历 Settings 的全部字段，断言每个字段都在本文件中登记，
+# 且 type / default / sensitive 与模型一致。
+#
+# 字段说明：
+#   type        —— 声明类型；与模型字段类型做映射比对
+#   default     —— 默认值（字符串形式）；敏感项为 null
+#   sensitive   —— 是否敏感（true 时必须在 .env.example 中出现且值为空）
+#   prd_section —— PRD 第 32.4 章的小节标题
+
+# ---------- 32.4 应用基础 ----------
+[app.base]
+APP_ENV = { type = "string", default = "local", sensitive = false, prd_section = "应用基础" }
+APP_TIMEZONE = { type = "string", default = "Asia/Shanghai", sensitive = false, prd_section = "应用基础" }
+APP_HOST = { type = "string", default = "127.0.0.1", sensitive = false, prd_section = "应用基础" }
+APP_PORT = { type = "int", default = "8000", sensitive = false, prd_section = "应用基础" }
+LOG_LEVEL = { type = "string", default = "INFO", sensitive = false, prd_section = "应用基础" }
+LOG_FORMAT = { type = "string", default = "json", sensitive = false, prd_section = "应用基础" }
+DATABASE_URL = { type = "string", default = "", sensitive = true, prd_section = "应用基础" }
+REDIS_URL = { type = "string", default = "", sensitive = true, prd_section = "应用基础" }
+FRONTEND_URL = { type = "string", default = "http://localhost:3000", sensitive = false, prd_section = "应用基础" }
+DASHBOARD_PUBLIC_BASE_URL = { type = "string", default = "", sensitive = false, prd_section = "应用基础" }
+
+# ---------- 32.4 鉴权 ----------
+[auth]
+AUTH_ENABLED = { type = "bool", default = "true", sensitive = false, prd_section = "鉴权" }
+AUTH_TOKEN = { type = "string", default = "null", sensitive = true, prd_section = "鉴权" }
+AUTH_TOKEN_SHA256 = { type = "string", default = "null", sensitive = true, prd_section = "鉴权" }
+AUTH_RATE_LIMIT_PER_MIN = { type = "int", default = "10", sensitive = false, prd_section = "鉴权" }
+ALLOWED_IPS = { type = "string", default = "", sensitive = false, prd_section = "鉴权" }
+PUBLIC_CALLBACK_ENABLED = { type = "bool", default = "false", sensitive = false, prd_section = "鉴权" }
+PUBLIC_CALLBACK_PORT = { type = "int", default = "8081", sensitive = false, prd_section = "鉴权" }
+PUBLIC_CALLBACK_TOKEN = { type = "string", default = "null", sensitive = true, prd_section = "鉴权" }
+
+# ---------- 32.4 行情采集 ----------
+[market_data]
+MARKET_SYMBOLS = { type = "string", default = "BTCUSDT,ETHUSDT", sensitive = false, prd_section = "行情采集" }
+MARKET_TYPES = { type = "string", default = "SPOT,USDM_FUTURES", sensitive = false, prd_section = "行情采集" }
+MARKET_TIMEFRAMES = { type = "string", default = "5m,15m,1h,4h", sensitive = false, prd_section = "行情采集" }
+MARKET_ENABLED_INTERVALS_1M = { type = "bool", default = "false", sensitive = false, prd_section = "行情采集" }
+MARKET_WS_RECONNECT_MAX_MS = { type = "int", default = "30000", sensitive = false, prd_section = "行情采集" }
+MARKET_OI_POLL_SECONDS = { type = "int", default = "60", sensitive = false, prd_section = "行情采集" }
+MARKET_CROSSCHECK_SECONDS = { type = "int", default = "300", sensitive = false, prd_section = "行情采集" }
+MARKET_BACKFILL_ENABLED = { type = "bool", default = "true", sensitive = false, prd_section = "行情采集" }
+MARKET_BACKFILL_MAX_KLINES = { type = "int", default = "1000", sensitive = false, prd_section = "行情采集" }
+MARKET_BOOK_SNAPSHOT_INTERVAL_SECONDS = { type = "int", default = "60", sensitive = false, prd_section = "行情采集" }
+MARKET_BOOK_DEPTH_LEVELS = { type = "int", default = "20", sensitive = false, prd_section = "行情采集" }
+CLOCK_SYNC_INTERVAL_SECONDS = { type = "int", default = "600", sensitive = false, prd_section = "行情采集" }
+CLOCK_SKEW_ALERT_MS = { type = "int", default = "5000", sensitive = false, prd_section = "行情采集" }
+
+# ---------- 32.4 异动与规则 ----------
+[anomaly]
+ANOMALY_SCAN_INTERVAL_SECONDS = { type = "int", default = "60", sensitive = false, prd_section = "异动与规则" }
+ANOMALY_RULE_CONFIG_PATH = { type = "string", default = "config/base.toml", sensitive = false, prd_section = "异动与规则" }
+ANOMALY_EVAL_HORIZONS = { type = "string", default = "1h,4h", sensitive = false, prd_section = "异动与规则" }
+ANOMALY_RULES_DISABLED = { type = "string", default = "", sensitive = false, prd_section = "异动与规则" }
+
+# ---------- 32.4 通知 ----------
+[notifications]
+FEISHU_ENABLED = { type = "bool", default = "false", sensitive = false, prd_section = "通知" }
+FEISHU_WEBHOOK_URL = { type = "string", default = "null", sensitive = true, prd_section = "通知" }
+FEISHU_SECRET = { type = "string", default = "null", sensitive = true, prd_section = "通知" }
+WECOM_APP_ENABLED = { type = "bool", default = "false", sensitive = false, prd_section = "通知" }
+WECOM_CORP_ID = { type = "string", default = "null", sensitive = true, prd_section = "通知" }
+WECOM_CORP_SECRET = { type = "string", default = "null", sensitive = true, prd_section = "通知" }
+WECOM_AGENT_ID = { type = "string", default = "null", sensitive = true, prd_section = "通知" }
+WECOM_TO_USER = { type = "string", default = "null", sensitive = false, prd_section = "通知" }
+WECOM_TO_PARTY = { type = "string", default = "null", sensitive = false, prd_section = "通知" }
+WECOM_TO_TAG = { type = "string", default = "null", sensitive = false, prd_section = "通知" }
+WECOM_APP_MSG_TYPE = { type = "string", default = "text", sensitive = false, prd_section = "通知" }
+WECOM_BOT_ENABLED = { type = "bool", default = "false", sensitive = false, prd_section = "通知" }
+WECOM_BOT_WEBHOOK_URL = { type = "string", default = "null", sensitive = true, prd_section = "通知" }
+NOTIFY_DAILY_QUOTA = { type = "int", default = "60", sensitive = false, prd_section = "通知" }
+NOTIFY_QUIET_HOURS = { type = "string", default = "00:00-07:00", sensitive = false, prd_section = "通知" }
+NOTIFY_CRITICAL_BYPASS_QUIET = { type = "bool", default = "false", sensitive = false, prd_section = "通知" }
+NOTIFY_CHANNEL_PRIORITY = { type = "string", default = "feishu,wecom_app", sensitive = false, prd_section = "通知" }
+NOTIFY_DELIVERY_MODE = { type = "string", default = "broadcast", sensitive = false, prd_section = "通知" }
+NOTIFY_SEVERITY_ROUTING = { type="string", default = "", sensitive = false, prd_section = "通知" }
+NOTIFY_QUOTA_COUNTING_MODE = { type = "string", default = "per_event", sensitive = false, prd_section = "通知" }
+NOTIFY_DEDUP_TTL_SECONDS = { type = "int", default = "86400", sensitive = false, prd_section = "通知" }
+NOTIFY_COOLDOWN_CRITICAL_SECONDS = { type = "int", default = "300", sensitive = false, prd_section = "通知" }
+NOTIFY_COOLDOWN_WARN_SECONDS = { type = "int", default = "1800", sensitive = false, prd_section = "通知" }
+NOTIFY_MAX_RETRIES = { type = "int", default = "4", sensitive = false, prd_section = "通知" }
+NOTIFY_RETRY_BACKOFF = { type = "string", default = "1s,3s,10s,30s", sensitive = false, prd_section = "通知" }
+NOTIFY_AI_MERGE_WINDOW_SECONDS = { type = "int", default = "30", sensitive = false, prd_section = "通知" }
+NOTIFY_WECOM_TOKEN_REFRESH_MARGIN_SECONDS = { type = "int", default = "300", sensitive = false, prd_section = "通知" }
+
+# ---------- 32.4 LLM ----------
+[llm]
+LLM_PROVIDER_DEFAULT = { type = "string", default = "cloud", sensitive = false, prd_section = "LLM" }
+LLM_CLOUD_BASE_URL = { type = "string", default = "null", sensitive = false, prd_section = "LLM" }
+LLM_CLOUD_API_KEY = { type = "string", default = "null", sensitive = true, prd_section = "LLM" }
+LLM_PROVIDER_LOCAL_BASE_URL = { type = "string", default = "http://ollama:11434/v1", sensitive = false, prd_section = "LLM" }
+LLM_PROVIDER_LOCAL_MODEL = { type = "string", default = "null", sensitive = false, prd_section = "LLM" }
+LLM_PROVIDER_LOCAL_API_KEY = { type = "string", default = "ollama", sensitive = true, prd_section = "LLM" }
+LLM_TIER_LIGHT_MODEL = { type = "string", default = "null", sensitive = false, prd_section = "LLM" }
+LLM_TIER_STANDARD_MODEL = { type = "string", default = "null", sensitive = false, prd_section = "LLM" }
+LLM_TIER_DEEP_MODEL = { type = "string", default = "null", sensitive = false, prd_section = "LLM" }
+LLM_DAILY_TOKEN_BUDGET = { type = "int", default = "null", sensitive = false, prd_section = "LLM" }
+LLM_DAILY_COST_BUDGET_USD = { type = "float", default = "null", sensitive = false, prd_section = "LLM" }
+LLM_MAX_INPUT_TOKENS = { type = "int", default = "24000", sensitive = false, prd_section = "LLM" }
+LLM_MAX_OUTPUT_TOKENS = { type = "int", default = "4000", sensitive = false, prd_section = "LLM" }
+LLM_AGENT_MAX_TOKENS = { type = "int", default = "8000", sensitive = false, prd_section = "LLM" }
+LLM_TIMEOUT_SECONDS = { type = "int", default = "60", sensitive = false, prd_section = "LLM" }
+LLM_MAX_RETRIES = { type = "int", default = "2", sensitive = false, prd_section = "LLM" }
+LLM_SCHEMA_REPAIR_ATTEMPTS = { type = "int", default = "1", sensitive = false, prd_section = "LLM" }
+LLM_ANALYSIS_TOTAL_BUDGET_SECONDS = { type = "int", default = "180", sensitive = false, prd_section = "LLM" }
+
+# ---------- 32.4 调度 ----------
+[scheduler]
+SCHEDULER_ENABLED = { type = "bool", default = "true", sensitive = false, prd_section = "调度" }
+SCHEDULER_TIMEZONE = { type = "string", default = "UTC", sensitive = false, prd_section = "调度" }
+SCHEDULER_MAX_BACKFILL_SECONDS = { type = "int", default = "86400", sensitive = false, prd_section = "调度" }
+SCHEDULER_LOCK_MODE = { type = "string", default = "postgres_advisory", sensitive = false, prd_section = "调度" }
+SCHEDULER_WORKER_POOL = { type = "int", default = "4", sensitive = false, prd_section = "调度" }
+
+# ---------- 32.4 Freqtrade (P1) ----------
+[freqtrade]
+FREQTRADE_ENABLED = { type = "bool", default = "false", sensitive = false, prd_section = "Freqtrade" }
+FREQTRADE_API_BASE_URL = { type = "string", default = "null", sensitive = false, prd_section = "Freqtrade" }
+FREQTRADE_API_USERNAME = { type = "string", default = "null", sensitive = true, prd_section = "Freqtrade" }
+FREQTRADE_API_PASSWORD = { type = "string", default = "null", sensitive = true, prd_section = "Freqtrade" }
+FREQTRADE_DRY_RUN_ENFORCE = { type = "bool", default = "true", sensitive = false, prd_section = "Freqtrade" }
+FREQTRADE_IMAGE_TAG = { type = "string", default = "null", sensitive = false, prd_section = "Freqtrade" }
+
+# ---------- 32.4 可观测性 ----------
+[observability]
+METRICS_ENABLED = { type = "bool", default = "true", sensitive = false, prd_section = "可观测性" }
+METRICS_BIND = { type = "string", default = "127.0.0.1:9100", sensitive = false, prd_section = "可观测性" }
+METRICS_AUTH_REQUIRED = { type = "bool", default = "false", sensitive = false, prd_section = "可观测性" }
+LOG_SAMPLING_RATE = { type = "float", default = "1.0", sensitive = false, prd_section = "可观测性" }
+
+# ---------- 32.4 备份与保留 ----------
+[backup]
+BACKUP_ENABLED = { type = "bool", default = "true", sensitive = false, prd_section = "备份与保留" }
+BACKUP_DIR = { type = "string", default = "/data/backups", sensitive = false, prd_section = "备份与保留" }
+BACKUP_RETENTION_DAYS = { type = "int", default = "14", sensitive = false, prd_section = "备份与保留" }
+BACKUP_RESTORE_DRILL_ENABLED = { type = "bool", default = "true", sensitive = false, prd_section = "备份与保留" }
+RETENTION_ENABLED = { type = "bool", default = "true", sensitive = false, prd_section = "备份与保留" }

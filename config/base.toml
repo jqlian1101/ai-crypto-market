@@ -1,0 +1,154 @@
+# 结构化非机密配置（PRD 第 32.2 节）
+#
+# .env 存机密（密钥、token、Webhook URL），只做"存在性"判断；
+# 本文件存结构化非机密配置（异动阈值、通知配额、模型档位映射、窗口长度）。
+#
+# 敏感项一律不写在这里。
+
+[app]
+# 代码版本与特征版本（写入 market_snapshots.feature_version，38 章）
+feature_version = "0.1.0"
+schema_version = "1"
+
+[market]
+symbols = ["BTCUSDT", "ETHUSDT"]
+market_types = ["SPOT", "USDM_FUTURES"]
+timeframes = ["5m", "15m", "1h", "4h"]
+# K 线周期对齐容差（毫秒），仅收盘 K 线才允许入库（29.5）
+close_tolerance_ms = 2000
+
+# 异动规则阈值（22.2.1 / 22.2.2）。资产差异化系数由滚动 30 日 realized vol 比值估计。
+[anomaly.rules]
+
+[anomaly.rules.price_move]
+# 涨跌幅（百分比），按 timeframe 与 severity 分级
+"1m_warn_pct" = 0.5
+"1m_critical_pct" = 1.5
+"5m_warn_pct" = 1.0
+"5m_critical_pct" = 3.0
+"15m_warn_pct" = 2.0
+"15m_critical_pct" = 5.0
+"1h_warn_pct" = 3.0
+"1h_critical_pct" = 7.0
+
+[anomaly.rules.volatility]
+# 波动率异动：当前 ATR 占滚动均值的倍数
+atr_ratio_warn = 1.8
+atr_ratio_critical = 3.0
+# realized vol 的滚动窗口与窗口数
+realized_vol_window = "1h"
+realized_vol_lookback = 30
+# regime 翻转检测的最小间隔（秒）
+regime_flip_min_interval_seconds = 900
+
+[anomaly.rules.volume]
+# 成交量异动：当前成交量占滚动均值的倍数
+volume_ratio_warn = 2.5
+volume_ratio_critical = 5.0
+volume_lookback = 20
+
+[anomaly.rules.derivatives]
+# Open Interest 异动：OI 变化率（百分比）
+oi_change_warn_pct = 5.0
+oi_change_critical_pct = 12.0
+# Funding 绝对值告警阈值
+funding_abs_warn = 0.0005
+funding_abs_critical = 0.001
+
+[anomaly.rules.data_quality]
+# 数据缺口容忍度（缺失根数）
+gap_warn_bars = 1
+gap_critical_bars = 3
+# 数据陈旧容忍度（秒）
+stale_warn_seconds = 180
+stale_critical_seconds = 600
+
+# 资产差异化系数：波动性基准越高的资产阈值越宽。
+# 由滚动 30 日 realized vol 比值估计，随快照落库（DATA_AND_COST_ANALYSIS §5 缺口 6）。
+[anomaly.asset_volatility_coefficient]
+BTCUSDT = 1.0
+ETHUSDT = 1.2
+
+# 通知治理（22.4.4）
+[notifications]
+daily_quota = 60
+quiet_hours = "00:00-07:00"
+critical_bypass_quiet = false
+dedup_ttl_seconds = 86400
+cooldown_critical_seconds = 300
+cooldown_warn_seconds = 1800
+ai_merge_window_seconds = 30
+# 账户级配额计数模式：per_event | per_channel
+quota_counting_mode = "per_event"
+
+[notifications.channels]
+# 各渠道自身的速率限制余量（22.4.1），单位：次/分钟
+feishu = 100
+wecom_app = 30
+wecom_bot = 20
+
+# LLM 模型档位映射（24.1）与成本闸门（24.2）
+[llm]
+provider_default = "cloud"
+tier_light_model = ""
+tier_standard_model = ""
+tier_deep_model = ""
+max_input_tokens = 24000
+max_output_tokens = 4000
+agent_max_tokens = 8000
+daily_token_budget = 4500000
+daily_cost_budget_usd = 3.0
+timeout_seconds = 60
+max_retries = 2
+schema_repair_attempts = 1
+analysis_total_budget_seconds = 180
+
+# 模型单价（会变，必须随 config_versions 版本化，不可硬编码在业务代码里）
+# effective_from 记录该单价的生效日期；llm_cost_records 记录所用单价版本。
+[llm.model_pricing]
+[llm.model_pricing."claude-haiku"]
+input_per_mtok = 0.10
+output_per_mtok = 0.50
+cached_input_per_mtok = 0.01
+effective_from = "2026-11-01"
+source_url = "https://www.anthropic.com/pricing"
+
+[llm.model_pricing."claude-sonnet"]
+input_per_mtok = 2.00
+output_per_mtok = 10.00
+cached_input_per_mtok = 0.10
+effective_from = "2026-11-01"
+source_url = "https://www.anthropic.com/pricing"
+
+[llm.model_pricing."claude-opus"]
+input_per_mtok = 4.00
+output_per_mtok = 20.00
+cached_input_per_mtok = 0.20
+effective_from = "2026-11-01"
+source_url = "https://www.anthropic.com/pricing"
+
+# 调度（23.1.1）：cron 一律按 UTC 解释
+[scheduler]
+timezone = "UTC"
+max_backfill_seconds = 86400
+worker_pool = 4
+
+[scheduler.jobs]
+market_data_ingest = "0 * * * *"
+market_intelligence_1h = "5 * * * *"
+anomaly_scan = "* * * * *"
+analysis_15m = "*/15 * * * *"
+analysis_1h = "10 * * * *"
+analysis_4h = "15 */4 * * *"
+analysis_daily = "0 22 * * *"
+analysis_weekly = "0 23 * * 0"
+
+# 评估口径（33 章）：口径版本号随算法演进递增
+[evaluation]
+metrics_version = "v1"
+min_sample_size = 20
+dedup_overlap_window_hours = 4
+
+# 回测一致性（38 章）：回测与线上必须使用同一份特征实现与同一版本号
+[backtest]
+feature_version = "0.1.0"
