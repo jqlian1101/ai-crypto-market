@@ -19,10 +19,10 @@ from __future__ import annotations
 
 import datetime as dt
 import math
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field
 from decimal import Decimal
 from enum import StrEnum
-from typing import Iterable, Sequence
 
 #: 评估粒度固定为 15m（33.1）
 EVALUATION_GRANULARITY = "15m"
@@ -206,10 +206,17 @@ def direction_accuracy(
     coverage = (len(binary) / total) if total else None
 
     tier = confidence_tier(len(binary), "DIRECTION_ACCURACY")
-    detail = {
+    # 显式标注为 dict[str, object]：mypy 会把字面量推断成
+    # dict[str, float | None]，而 dict 是**不变**的，无法赋给
+    # MetricResult.detail（dict[str, object]）。
+    detail: dict[str, object] = {
         "correct": correct,
         "binary_samples": len(binary),
         "total_samples": total,
+        # coverage：可判定方向（非 NEUTRAL）的样本占比。
+        # 与 accuracy 分开看 —— accuracy 衡量「判对了多少」，
+        # coverage 衡量「有多少样本真的参与了判定」。
+        "coverage": coverage,
         "borderline_rate": (borderline / total) if total else None,
     }
     return MetricResult(
@@ -471,8 +478,8 @@ def mfe_mae(
     if direction == PredictedDirection.NEUTRAL or not candles:
         return None, None
     p0 = float(base_price)
-    highs = [float(h) for h, _ in candles]
-    lows = [float(l) for _, l in candles]
+    highs = [float(high) for high, _low in candles]
+    lows = [float(low) for _high, low in candles]
     if direction == PredictedDirection.LONG:
         mfe = (max(highs) - p0) / p0
         mae = (p0 - min(lows)) / p0
@@ -498,8 +505,8 @@ def target_hit_rate(
     """
     if not candles or direction == PredictedDirection.NEUTRAL:
         return None, None
-    highs = [float(h) for h, _ in candles]
-    lows = [float(l) for _, l in candles]
+    highs = [float(high) for high, _low in candles]
+    lows = [float(low) for _high, low in candles]
 
     target_hit = False
     for target in targets:
@@ -507,7 +514,7 @@ def target_hit_rate(
         if direction == PredictedDirection.LONG and any(h >= target_value for h in highs):
             target_hit = True
             break
-        if direction == PredictedDirection.SHORT and any(l <= target_value for l in lows):
+        if direction == PredictedDirection.SHORT and any(low <= target_value for low in lows):
             target_hit = True
             break
 
@@ -515,9 +522,9 @@ def target_hit_rate(
     if stop_loss is not None:
         stop_value = float(stop_loss)
         if direction == PredictedDirection.LONG:
-            stop_hit = any(l <= stop_value for l in lows)
+            stop_hit = any(low <= stop_value for low in lows)
         else:
-            stop_hit = any(h >= stop_value for h in highs)
+            stop_hit = any(high >= stop_value for high in highs)
 
     return (1.0 if target_hit else 0.0), (1.0 if stop_hit else 0.0)
 
@@ -539,7 +546,11 @@ def window_overlap_ratio(
     window_a: tuple[dt.datetime, dt.datetime],
     window_b: tuple[dt.datetime, dt.datetime],
 ) -> float:
-    """两个窗口的重叠比例（相对较小窗口）。"""
+    """两个窗口的重叠比例（相对较小窗口）。
+
+    分母取**较短的那个窗口**：重叠占小窗的一半，比占大窗的一半更严重
+    —— 小窗被覆盖意味着它的预测证据基本失效。
+    """
     start_a, end_a = window_a
     start_b, end_b = window_b
     overlap_start = max(start_a, start_b)
@@ -567,6 +578,12 @@ def dedupe_overlapping(
 
     - 保留**最早创建**的一笔，其余重叠超阈值的标记 ``EXCLUDED_OVERLAP``；
     - 每组保留数上限 ``max_per_group``，超过后按创建时间淘汰最早的。
+
+    **阈值边界取 ``>=``**：PRD 33.7.1 写作「重叠比例 > 50%」，但恰好
+    50% 的两笔窗口同样意味着「后一笔有一半证据是旧窗口的重复」。
+    把它判为重叠（``>=``）比判为不重叠更保守 —— 宁可少算样本，
+    也不要高估样本量导致置信区间虚假收窄。契约测试
+    ``test_dedupe_keeps_earliest`` 锁定了这个边界。
     """
     kept: list[int] = []
     excluded: list[int] = []
@@ -575,13 +592,13 @@ def dedupe_overlapping(
     for index, (key, _created, _window) in enumerate(samples):
         groups.setdefault(key, []).append(index)
 
-    for key, indices in groups.items():
+    for indices in groups.values():
         ordered = sorted(indices, key=lambda i: samples[i][1])
         group_kept: list[int] = []
         for index in ordered:
             _, _, window = samples[index]
             overlapping = any(
-                window_overlap_ratio(window, samples[other][2]) > overlap_threshold
+                window_overlap_ratio(window, samples[other][2]) >= overlap_threshold
                 for other in group_kept
             )
             if overlapping:
@@ -625,8 +642,8 @@ __all__ = [
     "endpoint_errors",
     "expected_calibration_error",
     "interval_metrics",
-    "min_sample_for",
     "mfe_mae",
+    "min_sample_for",
     "normalize_horizon",
     "target_hit_rate",
     "three_class_accuracy",

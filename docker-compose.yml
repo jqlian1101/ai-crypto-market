@@ -1,0 +1,64 @@
+# ==============================================================================
+# AI Crypto Market Intelligence & Analysis Platform —— 本地依赖编排
+#
+# 说明（PRD 第 14 章）：
+# - 本文件只编排**基础设施**（PostgreSQL / Redis）。后端与前端在本地以
+#   进程方式运行（开发态热更新），不放入容器。
+# - 镜像使用 daocloud 代理前缀，因为直连 Docker Hub 在本机网络超时。
+#   如需换回官方源，把 `docker.m.daocloud.io/library/` 前缀去掉即可。
+# - 数据用 named volume 持久化，容器重建不丢数据。
+# ==============================================================================
+
+name: aicrypto-market
+
+services:
+  postgres:
+    # PostgreSQL 16 —— 30 章要求的 JSONB / TIMESTAMPTZ / CHECK 约束均需 PG 10+
+    image: docker.m.daocloud.io/library/postgres:16-alpine
+    container_name: aicrypto-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: aicrypto
+      POSTGRES_PASSWORD: aicrypto
+      POSTGRES_DB: aicrypto
+      # 初始化脚本使用 UTF8，避免中文提示词落库乱码
+      POSTGRES_INITDB_ARGS: "--encoding=UTF8 --locale=C"
+      TZ: UTC
+      PGTZ: UTC
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      # 用 pg_isready 而不是 curl，容器镜像自带
+      test: ["CMD-SHELL", "pg_isready -U aicrypto -d aicrypto"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+
+  redis:
+    image: docker.m.daocloud.io/library/redis:7-alpine
+    container_name: aicrypto-redis
+    restart: unless-stopped
+    command:
+      - redis-server
+      - --appendonly
+      - "yes"
+      - --save
+      - "60"
+      - "1"
+    ports:
+      - "127.0.0.1:6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 5s
+
+volumes:
+  postgres_data:
+  redis_data:

@@ -29,7 +29,7 @@ from aicrypto.domain.market.quality import (
     validate_ohlc,
 )
 
-UTC = dt.timezone.utc
+UTC = dt.UTC
 
 
 def make_candle(
@@ -135,12 +135,9 @@ class TestGapDetection:
     def test_contiguous_candles_have_no_gap(self) -> None:
         base = dt.datetime(2026, 11, 11, 0, 0, tzinfo=UTC)
         candles = [
-            make_candle(open_time=base + dt.timedelta(hours=i), timeframe="1h")
-            for i in range(5)
+            make_candle(open_time=base + dt.timedelta(hours=i), timeframe="1h") for i in range(5)
         ]
-        assert find_gaps(
-            candles, symbol="BTCUSDT", market_type="SPOT", timeframe="1h"
-        ) == []
+        assert find_gaps(candles, symbol="BTCUSDT", market_type="SPOT", timeframe="1h") == []
 
     def test_missing_candle_detected(self) -> None:
         base = dt.datetime(2026, 11, 11, 0, 0, tzinfo=UTC)
@@ -178,15 +175,11 @@ class TestTakerBuyDirection:
 class TestAlignment:
     def test_align_to_timeframe(self) -> None:
         moment = dt.datetime(2026, 11, 12, 10, 7, 33, tzinfo=UTC)
-        assert align_to_timeframe(moment, "15m") == dt.datetime(
-            2026, 11, 12, 10, 0, tzinfo=UTC
-        )
+        assert align_to_timeframe(moment, "15m") == dt.datetime(2026, 11, 12, 10, 0, tzinfo=UTC)
 
     def test_align_1h(self) -> None:
         moment = dt.datetime(2026, 11, 12, 10, 59, 59, tzinfo=UTC)
-        assert align_to_timeframe(moment, "1h") == dt.datetime(
-            2026, 11, 12, 10, 0, tzinfo=UTC
-        )
+        assert align_to_timeframe(moment, "1h") == dt.datetime(2026, 11, 12, 10, 0, tzinfo=UTC)
 
 
 class TestStaleness:

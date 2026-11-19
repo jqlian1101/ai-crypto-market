@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any
 
 from pydantic.fields import FieldInfo
+from pydantic.types import SecretStr
 
 from aicrypto.config.settings import CONFIG_DIR, Settings
 
@@ -154,9 +155,7 @@ def check_catalog_consistency(
             continue
         expected_type = _normalize_type(field)
         if expected_type != entry.type:
-            problems.append(
-                f"{key} 类型不一致: catalog={entry.type} settings={expected_type}"
-            )
+            problems.append(f"{key} 类型不一致: catalog={entry.type} settings={expected_type}")
         expected_default = _normalize_default(field)
         if expected_default != entry.default:
             problems.append(

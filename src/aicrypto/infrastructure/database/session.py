@@ -13,6 +13,7 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from typing import Any
 
+from fastapi import Request
 from sqlalchemy import Engine, create_engine, event
 from sqlalchemy.orm import Session, sessionmaker
 
@@ -97,7 +98,9 @@ def session_scope(settings: Settings | None = None) -> Iterator[Session]:
         session.close()
 
 
-def get_db() -> Iterator[Session]:
-    """FastAPI 依赖：每个请求一个会话。"""
-    with session_scope() as session:
+def get_db(request: Request) -> Iterator[Session]:
+    """FastAPI 依赖：每个请求一个会话，使用当前应用注入的配置。"""
+    from aicrypto.api.dependencies import resolve_settings
+
+    with session_scope(resolve_settings(request)) as session:
         yield session

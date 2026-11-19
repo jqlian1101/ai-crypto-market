@@ -99,10 +99,12 @@ LLM_CLOUD_BASE_URL = { type = "string", default = "null", sensitive = false, prd
 LLM_CLOUD_API_KEY = { type = "string", default = "null", sensitive = true, prd_section = "LLM" }
 LLM_PROVIDER_LOCAL_BASE_URL = { type = "string", default = "http://ollama:11434/v1", sensitive = false, prd_section = "LLM" }
 LLM_PROVIDER_LOCAL_MODEL = { type = "string", default = "null", sensitive = false, prd_section = "LLM" }
-LLM_PROVIDER_LOCAL_API_KEY = { type = "string", default = "ollama", sensitive = true, prd_section = "LLM" }
+LLM_PROVIDER_LOCAL_API_KEY = { type = "string", default = "null", sensitive = true, prd_section = "LLM" }
 LLM_TIER_LIGHT_MODEL = { type = "string", default = "null", sensitive = false, prd_section = "LLM" }
 LLM_TIER_STANDARD_MODEL = { type = "string", default = "null", sensitive = false, prd_section = "LLM" }
 LLM_TIER_DEEP_MODEL = { type = "string", default = "null", sensitive = false, prd_section = "LLM" }
+LLM_ENABLE_THINKING = { type = "bool", default = "null", sensitive = false, prd_section = "LLM" }
+LLM_TRUST_ENV = { type = "bool", default = "true", sensitive = false, prd_section = "LLM" }
 LLM_DAILY_TOKEN_BUDGET = { type = "int", default = "null", sensitive = false, prd_section = "LLM" }
 LLM_DAILY_COST_BUDGET_USD = { type = "float", default = "null", sensitive = false, prd_section = "LLM" }
 LLM_MAX_INPUT_TOKENS = { type = "int", default = "24000", sensitive = false, prd_section = "LLM" }

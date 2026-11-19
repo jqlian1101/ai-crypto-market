@@ -20,10 +20,8 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterator
-from contextlib import contextmanager
 from datetime import datetime
-from typing import Any
+from typing import Any, ClassVar
 
 from sqlalchemy import (
     Boolean,
@@ -33,10 +31,12 @@ from sqlalchemy import (
     Index,
     Integer,
     Numeric,
+    PrimaryKeyConstraint,
     SmallInteger,
     String,
     Text,
     UniqueConstraint,
+    text,
 )
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
@@ -48,7 +48,7 @@ class Base(DeclarativeBase):
     所有 ORM 模型继承它，命名约定在此统一（36.7）。
     """
 
-    type_annotation_map = {
+    type_annotation_map: ClassVar[dict[Any, Any]] = {
         datetime: DateTime(timezone=True),
         bool: Boolean,
         int: Integer,
@@ -92,7 +92,12 @@ def fk_column(target: str, *, nullable: bool = False) -> Mapped[str]:
 
 def bool_column(*, default: bool = False) -> Mapped[bool]:
     """布尔列：非空且有默认值（30.1）。"""
-    return mapped_column(Boolean, nullable=False, default=default)
+    return mapped_column(
+        Boolean,
+        nullable=False,
+        default=default,
+        server_default=text("true" if default else "false"),
+    )
 
 
 def json_column(*, nullable: bool = False) -> Mapped[Any]:
@@ -100,14 +105,52 @@ def json_column(*, nullable: bool = False) -> Mapped[Any]:
     return mapped_column(JsonType, nullable=nullable)
 
 
-def idx(*columns: str) -> Index:
-    """索引工厂：``idx_<table>_<cols>``（30.1 命名约定）。"""
-    return Index(*columns)
+def idx(name: str, *columns: Any) -> Index:
+    """索引工厂。
+
+    **第一个参数是完整的索引名**，后续是列名。索引名遵循 30.1 的命名约定
+    ``idx_<table>_<cols>``，例如 ``idx_market_candles_processed_at``。
+
+    之所以不自动拼名字：约定要求「可枚举、可比对」——CI 需要把 ORM 元数据
+    与迁移脚本里的索引名逐一对齐，自动拼装反而容易与 ``migrations/`` 漂移。
+    显式给出名字，两侧必须一致这件事就从「靠约定」变成了「看得见」。
+
+    列参数用 ``Any``：降序索引要传 ``text("close_time DESC")``
+    （见 :func:`desc_idx`），它不是 ``str``。
+    """
+    return Index(name, *columns)
+
+
+def desc_idx(name: str, *columns: str) -> Index:
+    """带 ``DESC`` 排序的索引工厂。
+
+    迁移脚本里降序索引写作 ``sa.text("close_time DESC")``。ORM 侧必须用
+    **同样的写法**才能让 autogenerate 认为两边一致 —— 用 ``desc("close_time")``
+    渲染出的表达式与 ``sa.text(...)`` 不等价，会被误判成「删了旧索引、
+    新建了新索引」，产生无意义的迁移 diff。
+
+    所以这里直接透传 ``sa.text``，而不是包装 ``desc()``。
+    """
+    # 查询等值过滤列保持升序，仅最后一个时间列降序。
+    return Index(name, *columns[:-1], text(f"{columns[-1]} DESC"))
 
 
 def uq(*columns: str, name: str) -> Any:
     """唯一约束工厂：``uq_<table>_<cols>``。"""
     return UniqueConstraint(*columns, name=name)
+
+
+def pk(name: str, *columns: str) -> PrimaryKeyConstraint:
+    """复合主键约束工厂：``pk_<table>``。
+
+    复合主键用**显式约束**而不是 ``__mapper_args__``：
+
+    - 约束名必须与 ``migrations/`` 里的 ``pk_<table>`` 完全一致，否则
+      autogenerate 会认为「删了一个主键又加了一个」，产生无意义的迁移；
+    - ``__mapper_args__`` 只能是 dict，写成方法会直接报错；
+    - 显式约束让「ORM ↔ 迁移」的一致性肉眼可查。
+    """
+    return PrimaryKeyConstraint(*columns, name=name)
 
 
 def ck(name: str, condition: str) -> CheckConstraint:
@@ -147,9 +190,11 @@ __all__ = [
     "bool_column",
     "check_in",
     "ck",
+    "desc_idx",
     "fk_column",
     "idx",
     "json_column",
+    "pk",
     "pk_column",
     "ts_column",
     "uq",

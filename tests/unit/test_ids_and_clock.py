@@ -18,7 +18,7 @@ from aicrypto.common.ids import (
     new_snapshot_id,
 )
 
-UTC = dt.timezone.utc
+UTC = dt.UTC
 MOMENT = dt.datetime(2026, 11, 12, 8, 30, tzinfo=UTC)
 
 
@@ -61,9 +61,7 @@ class TestClock:
         assert to_iso(moment) == "2026-11-09T01:23:45Z"
 
     def test_from_iso_roundtrip(self) -> None:
-        assert from_iso("2026-11-09T01:23:45Z") == dt.datetime(
-            2026, 11, 9, 1, 23, 45, tzinfo=UTC
-        )
+        assert from_iso("2026-11-09T01:23:45Z") == dt.datetime(2026, 11, 9, 1, 23, 45, tzinfo=UTC)
 
     def test_frozen_clock_advance(self) -> None:
         clock = FrozenClock(MOMENT)

@@ -24,13 +24,13 @@ from __future__ import annotations
 import datetime as dt
 import threading
 
-from ulid import ULID
+from ulid import new as ulid_new
 
 #: 需要日期段的 ID 前缀
 DATED_PREFIXES = frozenset({"snap", "run", "ae"})
 
 #: 不带日期段的 ID 前缀
-PLAIN_PREFIXES = frozenset({"out", "sig", "pred", "ne", "job", "txn"})
+PLAIN_PREFIXES = frozenset({"out", "sig", "pred", "ne", "job", "txn", "analysis", "feedback"})
 
 _ULID_LENGTH = 10
 
@@ -43,8 +43,13 @@ def _today(now: dt.datetime) -> str:
 
 
 def new_ulid() -> str:
-    """生成一个 26 位 ULID 字符串。"""
-    return str(ULID())
+    """生成一个 26 位 ULID 字符串。
+
+    用 ``ulid.new()`` 而不是 ``ulid.ULID()``：``ulid-py`` 1.1 起
+    ``ULID()`` 变成了「从 buffer 解析」的构造器（必须传 bytes），
+    生成新 ULID 的入口是 ``new()``。
+    """
+    return str(ulid_new())
 
 
 def new_id(prefix: str, *, now: dt.datetime | None = None) -> str:
@@ -54,7 +59,7 @@ def new_id(prefix: str, *, now: dt.datetime | None = None) -> str:
     - 其余前缀 → ``{prefix}_{ulid10}``
     """
     if prefix in DATED_PREFIXES:
-        moment = now or dt.datetime.now(dt.timezone.utc)
+        moment = now or dt.datetime.now(dt.UTC)
         return f"{prefix}_{_today(moment)}_{new_ulid()[-_ULID_LENGTH:]}"
     if prefix in PLAIN_PREFIXES:
         return f"{prefix}_{new_ulid()}"
@@ -71,6 +76,14 @@ def new_run_id(*, now: dt.datetime | None = None) -> str:
 
 def new_output_id() -> str:
     return new_id("out")
+
+
+def new_analysis_id() -> str:
+    return new_id("analysis")
+
+
+def new_feedback_id() -> str:
+    return new_id("feedback")
 
 
 def new_signal_id() -> str:
@@ -103,7 +116,7 @@ def new_anomaly_event_id(
     ``sequence`` 为 None 时使用进程内自增计数器（按天 + 资产维度）。
     同一进程内单调递增；跨进程唯一性由数据库唯一约束兜底。
     """
-    moment = now or dt.datetime.now(dt.timezone.utc)
+    moment = now or dt.datetime.now(dt.UTC)
     day = _today(moment)
     if sequence is None:
         with _seq_lock:

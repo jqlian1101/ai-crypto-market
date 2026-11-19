@@ -91,7 +91,13 @@ def configure_logging(
     structlog.configure(
         processors=processors,
         wrapper_class=structlog.make_filtering_bound_logger(numeric_level),
-        logger_factory=structlog.PrintLoggerFactory(),
+        # 用 stdlib 的 LoggerFactory 而不是 PrintLoggerFactory：
+        # 上面的 ``structlog.stdlib.add_logger_name`` 依赖 logger 有
+        # ``.name`` 属性，``PrintLogger`` 没有，会在配置阶段就抛
+        # ``AttributeError: 'PrintLogger' object has no attribute 'name'``。
+        # 走 stdlib 还有一个好处：日志统一由 ``logging.basicConfig``
+        # 写到 stdout，JSON 格式的日志行不会被第三方库的 handler 拆散。
+        logger_factory=structlog.stdlib.LoggerFactory(),
         cache_logger_on_first_use=True,
     )
 
@@ -133,6 +139,6 @@ def _sampling_processor(
         return event_dict
     if _sampling_rate >= 1.0:
         return event_dict
-    if random.random() < _sampling_rate:  # noqa: S311 - 非安全用途
+    if random.random() < _sampling_rate:
         return event_dict
     raise structlog.DropEvent

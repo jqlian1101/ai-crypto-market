@@ -155,9 +155,7 @@ ERROR_CATALOG: dict[ErrorCode, ErrorSpec] = {
         _spec(ErrorCode.PAPER_ACCOUNT_NOT_FOUND, 404, "模拟账户不存在"),
         _spec(ErrorCode.PAPER_ACCOUNT_PAUSED, 409, "账户已暂停"),
         _spec(ErrorCode.PAPER_ORDER_NOT_FOUND, 404, "订单不存在"),
-        _spec(
-            ErrorCode.PAPER_RECON_DIFF_UNRESOLVED, 409, "存在未解释对账差异，阻断新开仓"
-        ),
+        _spec(ErrorCode.PAPER_RECON_DIFF_UNRESOLVED, 409, "存在未解释对账差异，阻断新开仓"),
         _spec(ErrorCode.PAPER_DRY_RUN_VIOLATION, 500, "Freqtrade 非 dry-run，拒绝启动"),
         _spec(ErrorCode.RISK_LIMIT_EXCEEDED, 409, "单笔风险/杠杆/日亏损限制"),
         _spec(ErrorCode.RISK_SERVICE_UNAVAILABLE, 503, "风控服务不可用，拒绝新开仓", True),

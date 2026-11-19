@@ -11,7 +11,7 @@ import datetime as dt
 from collections.abc import Callable
 from typing import Protocol
 
-UTC = dt.timezone.utc
+UTC = dt.UTC
 
 
 class Clock(Protocol):

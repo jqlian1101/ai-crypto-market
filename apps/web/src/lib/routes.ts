@@ -1,0 +1,23 @@
+/** Dashboard 路由，不属于 HTTP 数据契约。 */
+export const ROUTES = {
+  home: "/",
+  market: (symbol: string) => `/markets/${encodeURIComponent(symbol)}`,
+  analysis: (analysisId: string) => `/analysis/${encodeURIComponent(analysisId)}`,
+  opportunities: "/opportunities",
+  predictions: "/predictions",
+  prediction: (id: string) => `/predictions/${encodeURIComponent(id)}`,
+  research: "/research",
+  performance: "/performance",
+  agents: "/agents",
+  experiments: "/experiments",
+  experiment: (id: string) => `/experiments/${encodeURIComponent(id)}`,
+  anomalies: "/anomalies",
+  anomaly: (id: string) => `/anomalies/${encodeURIComponent(id)}`,
+  notifications: "/notifications",
+  notificationPrefs: "/notifications/prefs",
+  jobs: "/jobs",
+  system: "/system",
+  paper: "/paper",
+  authVerify: "/auth/verify",
+  shortLink: (id: string) => `/s/${encodeURIComponent(id)}`,
+} as const;

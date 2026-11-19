@@ -11,6 +11,7 @@
 from __future__ import annotations
 
 import datetime as dt
+import itertools
 from dataclasses import dataclass
 from decimal import Decimal
 from enum import StrEnum
@@ -95,7 +96,7 @@ def align_to_timeframe(moment: dt.datetime, timeframe: str) -> dt.datetime:
     step = interval_seconds(timeframe)
     epoch = int(moment.timestamp())
     aligned = epoch - (epoch % step)
-    return dt.datetime.fromtimestamp(aligned, tz=dt.timezone.utc)
+    return dt.datetime.fromtimestamp(aligned, tz=dt.UTC)
 
 
 def is_candle_closed(candle: Candle, *, at: dt.datetime | None = None) -> bool:
@@ -119,9 +120,7 @@ def validate_ohlc(candle: Candle) -> str | None:
     if candle.high < candle.low:
         return f"high({candle.high}) < low({candle.low})"
     if candle.high < max(candle.open, candle.close):
-        return (
-            f"high({candle.high}) < max(open({candle.open}), close({candle.close}))"
-        )
+        return f"high({candle.high}) < max(open({candle.open}), close({candle.close}))"
     if candle.volume < 0:
         return f"volume({candle.volume}) < 0"
     if candle.quote_volume < 0:
@@ -174,7 +173,7 @@ def find_gaps(
     step = interval_seconds(timeframe)
     gaps: list[dict[str, object]] = []
     ordered = sorted(candles, key=lambda c: c.open_time)
-    for previous, current in zip(ordered, ordered[1:], strict=False):
+    for previous, current in itertools.pairwise(ordered):
         delta = (current.open_time - previous.open_time).total_seconds()
         if delta <= step:
             continue
@@ -186,9 +185,7 @@ def find_gaps(
                 "symbol": symbol,
                 "market_type": market_type,
                 "timeframe": timeframe,
-                "expected_open_time": (
-                    previous.open_time + dt.timedelta(seconds=step)
-                ).isoformat(),
+                "expected_open_time": (previous.open_time + dt.timedelta(seconds=step)).isoformat(),
                 "prev_close_time": previous.close_time.isoformat(),
                 "missing_bars": missing,
             }

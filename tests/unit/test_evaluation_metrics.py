@@ -35,7 +35,7 @@ from aicrypto.domain.evaluation.metrics import (
     window_overlap_ratio,
 )
 
-UTC = dt.timezone.utc
+UTC = dt.UTC
 
 
 class TestDirectionLabel:
@@ -159,25 +159,22 @@ class TestMfeMae:
 
     def test_long_mfe_mae(self) -> None:
         candles = [(Decimal("110"), Decimal("95")), (Decimal("108"), Decimal("99"))]
-        mfe, mae = mfe_mae(
-            PredictedDirection.LONG, base_price=Decimal("100"), candles=candles
-        )
+        mfe, mae = mfe_mae(PredictedDirection.LONG, base_price=Decimal("100"), candles=candles)
         assert mfe == pytest.approx(0.10)
         assert mae == pytest.approx(0.05)
 
     def test_short_mfe_mae(self) -> None:
         candles = [(Decimal("110"), Decimal("95"))]
-        mfe, mae = mfe_mae(
-            PredictedDirection.SHORT, base_price=Decimal("100"), candles=candles
-        )
+        mfe, mae = mfe_mae(PredictedDirection.SHORT, base_price=Decimal("100"), candles=candles)
         assert mfe == pytest.approx(0.05)
         assert mae == pytest.approx(0.10)
 
     def test_neutral_is_not_applicable(self) -> None:
         candles = [(Decimal("110"), Decimal("95"))]
-        assert mfe_mae(
-            PredictedDirection.NEUTRAL, base_price=Decimal("100"), candles=candles
-        ) == (None, None)
+        assert mfe_mae(PredictedDirection.NEUTRAL, base_price=Decimal("100"), candles=candles) == (
+            None,
+            None,
+        )
 
 
 class TestTargetHit:
@@ -225,7 +222,10 @@ class TestOverlapDedup:
 
     def test_overlap_ratio(self) -> None:
         a = (dt.datetime(2026, 11, 12, 0, tzinfo=UTC), dt.datetime(2026, 11, 12, 1, tzinfo=UTC))
-        b = (dt.datetime(2026, 11, 12, 0, 30, tzinfo=UTC), dt.datetime(2026, 11, 12, 1, 30, tzinfo=UTC))
+        b = (
+            dt.datetime(2026, 11, 12, 0, 30, tzinfo=UTC),
+            dt.datetime(2026, 11, 12, 1, 30, tzinfo=UTC),
+        )
         assert window_overlap_ratio(a, b) == pytest.approx(0.5)
 
     def test_dedupe_keeps_earliest(self) -> None:
@@ -235,7 +235,11 @@ class TestOverlapDedup:
         t0 = dt.datetime(2026, 11, 12, 0, tzinfo=UTC)
         samples = [
             (key, t0, (t0, t0 + dt.timedelta(hours=1))),
-            (key, t0 + dt.timedelta(minutes=30), (t0 + dt.timedelta(minutes=30), t0 + dt.timedelta(minutes=90))),
+            (
+                key,
+                t0 + dt.timedelta(minutes=30),
+                (t0 + dt.timedelta(minutes=30), t0 + dt.timedelta(minutes=90)),
+            ),
         ]
         kept, excluded = dedupe_overlapping(samples)
         assert kept == [0]
@@ -248,7 +252,11 @@ class TestOverlapDedup:
         t0 = dt.datetime(2026, 11, 12, 0, tzinfo=UTC)
         samples = [
             (key, t0, (t0, t0 + dt.timedelta(hours=1))),
-            (key, t0 + dt.timedelta(hours=5), (t0 + dt.timedelta(hours=5), t0 + dt.timedelta(hours=6))),
+            (
+                key,
+                t0 + dt.timedelta(hours=5),
+                (t0 + dt.timedelta(hours=5), t0 + dt.timedelta(hours=6)),
+            ),
         ]
         kept, excluded = dedupe_overlapping(samples)
         assert kept == [0, 1]

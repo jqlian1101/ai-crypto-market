@@ -1,6 +1,4 @@
-"""分析领域包。"""
-
-from __future__ import annotations
+"""纯分析领域对象；持久化模型位于 infrastructure.database.models。"""
 
 from aicrypto.domain.analysis.agent_output import (
     OUTPUT_SCHEMA_VERSION,
@@ -13,13 +11,15 @@ from aicrypto.domain.analysis.agent_output import (
     VolatilityState,
     validate_confidence_is_not_probability,
 )
-from aicrypto.domain.analysis.models import (
-    AgentRun,
-    AgentVersion,
-    LLMCostRecord,
-    MarketSnapshotRecord,
-    ModelRun,
-    PromptVersion,
+from aicrypto.domain.analysis.report import (
+    AnalysisMode,
+    AnalysisReport,
+    AnalysisReportContent,
+    AnalysisRun,
+    AnalysisRunStatus,
+    AnalysisScenario,
+    EvidenceRef,
+    ScenarioProbability,
 )
 from aicrypto.domain.analysis.snapshot import (
     AGENT_VIEWS,
@@ -35,17 +35,19 @@ __all__ = [
     "OUTPUT_SCHEMA_VERSION",
     "SNAPSHOT_SCHEMA_VERSION",
     "AgentOutput",
-    "AgentRun",
     "AgentStatus",
-    "AgentVersion",
+    "AnalysisMode",
+    "AnalysisReport",
+    "AnalysisReportContent",
+    "AnalysisRun",
+    "AnalysisRunStatus",
+    "AnalysisScenario",
     "Direction",
-    "LLMCostRecord",
+    "EvidenceRef",
     "MarketRegime",
     "MarketSnapshot",
-    "MarketSnapshotRecord",
-    "ModelRun",
     "ModelTier",
-    "PromptVersion",
+    "ScenarioProbability",
     "SignalDirection",
     "SnapshotContent",
     "VolatilityState",

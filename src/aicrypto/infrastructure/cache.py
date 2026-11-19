@@ -41,8 +41,18 @@ async def close_redis() -> None:
 
 
 async def cache_get(key: str) -> str | None:
+    """读缓存。
+
+    客户端建连时带 ``decode_responses=True``，所以返回值是 ``str``；
+    但 redis 的类型标注是 ``bytes | str | None``，这里做一次收窄。
+    """
     client = get_redis()
-    return await client.get(key)
+    value = await client.get(key)
+    if value is None:
+        return None
+    if isinstance(value, bytes):
+        return value.decode("utf-8")
+    return value
 
 
 async def cache_set(key: str, value: str, *, ttl_seconds: int = 300) -> None:

@@ -16,6 +16,8 @@ import {
 } from "@tanstack/react-query";
 import { useCallback, useEffect, useRef, useState } from "react";
 
+import { POLL_BACKOFF_MS } from "@/lib/query-policy";
+
 import { apiGet, ApiRequestError, type ApiResult } from "./client";
 
 /** 页面可见性 Hook。不可见时返回 false，用于暂停轮询。 */
@@ -109,7 +111,7 @@ export function usePollingQuery<T>(options: PollOptions): UseQueryResult<T> {
       const errorCount = query.state.fetchFailureCount;
       if (errorCount >= 3) {
         const index = Math.min(errorCount - 3, 2);
-        return [5_000, 15_000, 60_000][index] ?? 60_000;
+        return POLL_BACKOFF_MS[index] ?? 60_000;
       }
       return intervalMs;
     },

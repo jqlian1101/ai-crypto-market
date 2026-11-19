@@ -169,6 +169,7 @@ class MarketSnapshot:
     market_type: str
     as_of: dt.datetime
     content: SnapshotContent
+    available_as_of: dt.datetime | None = None
     data_quality: DataQuality = DataQuality.GOOD
     data_quality_detail: dict[str, Any] = field(default_factory=dict)
     feature_version: str = "0.1.0"
@@ -189,6 +190,7 @@ class MarketSnapshot:
             "symbol": self.symbol,
             "market_type": self.market_type,
             "as_of": self.as_of.isoformat(),
+            "available_as_of": (self.available_as_of.isoformat() if self.available_as_of else None),
             "content": self.content.to_dict(),
             "data_quality": str(self.data_quality),
             "data_quality_detail": self.data_quality_detail,
@@ -208,11 +210,13 @@ def _parse_timestamp(value: str) -> dt.datetime | None:
     except ValueError:
         return None
     if parsed.tzinfo is None:
-        parsed = parsed.replace(tzinfo=dt.timezone.utc)
-    return parsed.astimezone(dt.timezone.utc)
+        parsed = parsed.replace(tzinfo=dt.UTC)
+    return parsed.astimezone(dt.UTC)
 
 
-def iter_timestamps(payload: Any, *, parent_key: str | None = None) -> list[tuple[str, dt.datetime]]:
+def iter_timestamps(
+    payload: Any, *, parent_key: str | None = None
+) -> list[tuple[str, dt.datetime]]:
     """递归收集内容中的时间戳。
 
     返回 ``(路径, 时间戳)`` 列表。路径形如 ``content.indicators.rsi.as_of``。
@@ -243,7 +247,7 @@ def find_future_timestamps(content: Any, as_of: dt.datetime) -> list[tuple[str, 
 
     这是 36.3 必测清单中「快照不含未来数据」的实现。
     """
-    bound = as_of if as_of.tzinfo else as_of.replace(tzinfo=dt.timezone.utc)
+    bound = as_of if as_of.tzinfo else as_of.replace(tzinfo=dt.UTC)
     violations: list[tuple[str, dt.datetime]] = []
     for path, moment in iter_timestamps(content):
         if moment > bound:

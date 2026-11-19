@@ -40,7 +40,10 @@ dev = [
     "freezegun>=1.5",
     "ruff>=0.8",
     "mypy>=1.13",
-    "types-redis>=4.6",
+    # 注意：**不要**装 types-redis。redis-py 自 4.2 起就自带 `py.typed`，
+    # 而 types-redis 的存根是 2024-10 的旧快照，缺少 `aclose()`，
+    # 会**遮蔽** redis 自带的类型 —— mypy 会报
+    # `"Redis[Any]" has no attribute "aclose"`。
     "types-requests>=2.32",
     "alembic>=1.14",
 ]
@@ -117,6 +120,9 @@ warn_return_any = true
 minversion = "8.0"
 testpaths = ["tests"]
 asyncio_mode = "auto"
+# 显式声明 event loop 作用域，避免 pytest-asyncio 的
+# "asyncio_default_fixture_loop_scope is unset" 警告（未来版本会变更默认值）。
+asyncio_default_fixture_loop_scope = "function"
 addopts = [
     "-ra",
     "--strict-markers",

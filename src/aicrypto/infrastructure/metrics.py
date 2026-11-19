@@ -352,7 +352,7 @@ def all_metric_names() -> set[str]:
     """全部注册指标名（不含 ``_total`` 后缀归一）。"""
     names: set[str] = set()
     for metric in _METRIC_OBJECTS:
-        name = metric._name  # noqa: SLF001 - prometheus_client 无公开属性
+        name = metric._name
         names.add(name.removesuffix("_total"))
     return names
 

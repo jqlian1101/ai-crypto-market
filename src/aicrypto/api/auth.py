@@ -16,6 +16,7 @@ from typing import Annotated
 from fastapi import Depends, Request
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
+from aicrypto.api.dependencies import resolve_settings
 from aicrypto.common.errors import AuthenticationError, AuthorizationError
 from aicrypto.config.settings import Settings, get_settings
 from aicrypto.infrastructure.logging import get_logger
@@ -88,7 +89,7 @@ async def require_auth(
 
     失败时抛 :class:`AuthenticationError`（``401 COMMON_UNAUTHORIZED``）。
     """
-    cfg = get_settings()
+    cfg = resolve_settings(request)
     if not cfg.AUTH_ENABLED:
         return ""
 
@@ -109,7 +110,7 @@ def require_auth_if_enabled(
     credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(_bearer_scheme)],
 ) -> str:
     """同步版本的鉴权依赖（非 async 上下文可用）。"""
-    cfg = get_settings()
+    cfg = resolve_settings(request)
     if not cfg.AUTH_ENABLED:
         return ""
     if credentials is None or not credentials.credentials:

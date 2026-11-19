@@ -182,10 +182,13 @@ class Settings(BaseSettings):
     LLM_CLOUD_API_KEY: SecretStr | None = Field(default=None)
     LLM_PROVIDER_LOCAL_BASE_URL: str = Field(default="http://ollama:11434/v1")
     LLM_PROVIDER_LOCAL_MODEL: str | None = Field(default=None)
-    LLM_PROVIDER_LOCAL_API_KEY: SecretStr | None = Field(default="ollama")
+    # 本地 Ollama 默认无鉴权。默认留空（不占位）—— 占位值会被误当成真配置。
+    LLM_PROVIDER_LOCAL_API_KEY: SecretStr | None = Field(default=None)
     LLM_TIER_LIGHT_MODEL: str | None = Field(default=None)
     LLM_TIER_STANDARD_MODEL: str | None = Field(default=None)
     LLM_TIER_DEEP_MODEL: str | None = Field(default=None)
+    LLM_ENABLE_THINKING: bool | None = Field(default=None)
+    LLM_TRUST_ENV: bool = Field(default=True)
     LLM_DAILY_TOKEN_BUDGET: int | None = Field(default=None, description="日 token 硬上限")
     LLM_DAILY_COST_BUDGET_USD: float | None = Field(default=None, description="日费用硬上限")
     LLM_MAX_INPUT_TOKENS: int = Field(default=24000, ge=1024)
@@ -265,9 +268,8 @@ class Settings(BaseSettings):
             raise ValueError("DATABASE_URL 缺失：配置校验失败必须阻止进程启动")
         if not self.REDIS_URL:
             raise ValueError("REDIS_URL 缺失：配置校验失败必须阻止进程启动")
-        if self.AUTH_ENABLED:
-            if self.AUTH_TOKEN is None and not self.AUTH_TOKEN_SHA256:
-                raise ValueError("AUTH_ENABLED=true 时 AUTH_TOKEN 或 AUTH_TOKEN_SHA256 必须配置")
+        if self.AUTH_ENABLED and self.AUTH_TOKEN is None and not self.AUTH_TOKEN_SHA256:
+            raise ValueError("AUTH_ENABLED=true 时 AUTH_TOKEN 或 AUTH_TOKEN_SHA256 必须配置")
         if self.PUBLIC_CALLBACK_ENABLED and self.PUBLIC_CALLBACK_TOKEN is None:
             raise ValueError("PUBLIC_CALLBACK_ENABLED=true 时 PUBLIC_CALLBACK_TOKEN 必须配置")
         if self.FEISHU_ENABLED and self.FEISHU_WEBHOOK_URL is None:

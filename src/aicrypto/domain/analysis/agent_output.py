@@ -9,9 +9,8 @@ from __future__ import annotations
 
 import datetime as dt
 from enum import StrEnum
-from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 #: 输出结构版本（30.4：schema 必须版本化）
 OUTPUT_SCHEMA_VERSION = "1"
@@ -39,9 +38,23 @@ class AgentOutput(BaseModel):
     uncertainties: list[str] = Field(default_factory=list, description="不确定性")
     missing_data: list[str] = Field(default_factory=list, description="缺失的数据项")
     confidence: float = Field(ge=0.0, le=1.0, description="主观置信度，不等于统计胜率")
-    invalidation_conditions: list[str] = Field(
-        default_factory=list, description="使结论失效的条件"
+    scenario_probabilities: dict[str, float] | None = Field(
+        default=None, description="互斥 UP/DOWN/FLAT 情景概率，供三分类评估"
     )
+    invalidation_conditions: list[str] = Field(default_factory=list, description="使结论失效的条件")
+
+    @model_validator(mode="after")
+    def validate_scenario_probabilities(self) -> AgentOutput:
+        if self.scenario_probabilities is None:
+            return self
+        expected = {"up", "down", "flat"}
+        if set(self.scenario_probabilities) != expected:
+            raise ValueError("scenario_probabilities 必须包含 up/down/flat")
+        if any(not 0 <= value <= 1 for value in self.scenario_probabilities.values()):
+            raise ValueError("情景概率必须位于 [0, 1]")
+        if abs(sum(self.scenario_probabilities.values()) - 1.0) > 1e-6:
+            raise ValueError("情景概率之和必须为 1")
+        return self
 
 
 class AgentStatus(StrEnum):
@@ -106,7 +119,7 @@ def validate_confidence_is_not_probability(output: AgentOutput) -> bool:
     本函数返回是否**可以**计算 Brier。
     """
     extra = output.model_extra or {}
-    return "probability" in extra
+    return output.scenario_probabilities is not None or "probability" in extra
 
 
 __all__ = [

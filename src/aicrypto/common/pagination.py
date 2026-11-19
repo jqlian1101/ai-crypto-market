@@ -14,12 +14,9 @@ import base64
 import binascii
 import json
 from dataclasses import dataclass
-from datetime import datetime
-from typing import Any, Generic, Literal, TypeVar
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
-
-T = TypeVar("T")
 
 DEFAULT_LIMIT = 50
 MAX_LIMIT = 500
@@ -44,7 +41,7 @@ class PaginationMeta(BaseModel):
     next_cursor: str | None = Field(default=None)
 
 
-class PaginatedResponse(BaseModel, Generic[T]):
+class PaginatedResponse[T](BaseModel):
     """分页成功响应。"""
 
     data: list[T]

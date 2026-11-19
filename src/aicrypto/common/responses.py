@@ -13,11 +13,9 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any, Generic, TypeVar
+from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
-
-T = TypeVar("T")
 
 
 class ResponseMeta(BaseModel):
@@ -30,7 +28,7 @@ class ResponseMeta(BaseModel):
     generated_at: datetime = Field(description="响应生成时刻（UTC）")
 
 
-class SuccessResponse(BaseModel, Generic[T]):
+class SuccessResponse[T](BaseModel):
     """单资源成功响应。"""
 
     model_config = ConfigDict(extra="allow")

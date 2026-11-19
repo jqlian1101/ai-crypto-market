@@ -1,7 +1,7 @@
 # AI Crypto Market Intelligence & Analysis Platform
 ## 产品需求文档（PRD）与技术设计文档（TDD）
 
-- 文档版本：2.3
+- 文档版本：2.4
 - 文档状态：研发基线草案
 - 产品范围：个人自用、本地部署、BTC/ETH 加密资产行情研究与 AI 分析
 - 核心定位：**行情研究和 AI 分析为主；历史追踪、回测和模拟交易用于验证分析质量**
@@ -26,6 +26,14 @@
 > v2.3 的补齐原则：v2.0–v2.2 定义的**产品行为**全部保留不变，只补**实现契约**。v2.0–v2.2 是一份「做什么」写得很好的文档，但把它变成能开工的代码还缺三层地基：**数据从哪来、以什么形状落地、对外长什么样**。v2.3 补齐这三层，并把散落在各章的隐含约定显式化。
 >
 > **v2.3 新增章节均为「契约层」内容，不改变任何业务规则、阈值或评估口径的行为定义。凡与既有章节冲突处，以 v2.3 新章为准，并在原章节标注交叉引用。**
+
+## 0.0 v2.4 修订说明
+
+- **AI 分析是主要功能**：行情、规则、调度、通知和评估均服务于分析质量与用户理解；主要产品对象为分析报告，预测、机会和交易计划为可选产物。
+- 新增 4.7.1–4.7.3：分析报告契约、Agent 分工、综合判断与质量验收；补充第 5 章内容质量评价。
+- 重写第 16、20 章：首版保留多 Agent 分析深度，收敛通知渠道、研究实验和模拟交易等外围范围。企业微信为 P1；首版可按个人实际入口选择一个通知渠道。
+- 修正第 33 章的发布时间与基准价、概率事件定义、重叠样本处理和评估数据边界；补充前向预测与事后历史分析的隔离。
+- 本次修改涉及业务定义与数据契约，不属于 v2.3 的纯工程补齐。**冲突时以本次明确修订的章节及第 20 章 MVP 范围为准**；其他章节的全量能力清单是目标范围，不表示全部阻断首版交付。
 
 ## 0.1 规格索引（开发导航）
 
@@ -394,6 +402,53 @@ Order Book 快照不是完整市场深度事实；采样频率、丢包和聚合
 6. 每次运行保存完整输入引用和输出，便于复现。
 7. 外部新闻、网页、Skill 和工具返回内容均为不可信数据，不能覆盖系统规则或工具权限。
 
+### 4.7.1 分析报告：主要产品对象（v2.4）
+
+核心流程为：**市场快照 → 专业 Agent 分析 → Master 综合报告 → 可选的预测/机会/计划 → 后续追踪与复盘**。分析报告独立存在，不以产生交易信号为成功条件；`WAIT`、`NO_CLEAR_SETUP` 和证据不足均为合法结论。
+
+每份报告至少包含以下结构化字段，内容 schema 随 `schema_version` 管理：
+
+| 字段 | 内容与约束 |
+|---|---|
+| `analysis_id` / `symbol` / `market_type` | 报告身份与分析市场 |
+| `market_snapshot_id` / `snapshot_as_of` | 输入快照与信息截止时间 |
+| `published_at` / `analysis_mode` | 首次对用户可见的时刻；`LIVE`、`BACKFILL` 或 `RETROSPECTIVE` |
+| `status` / `degraded` / `missing_data` | 完整、部分、失败状态及缺失信息；规则兜底必须明确标记，不能冒充 AI 综合报告 |
+| `summary` / `market_bias` | 简洁的主要判断与适用时间窗口 |
+| `dominant_factors` | 当前主导因素、支持理由与解释边界；相关性不能直接表述为因果 |
+| `timeframe_views` | 各周期判断、冲突及其对主要结论的影响 |
+| `scenarios` | 主要与替代情景、时间窗口、触发条件、失效条件；概率如提供则定义互斥事件并归一化 |
+| `evidence` / `counter_evidence` | 引用快照字段或工具结果的证据 ID、值、时间；禁止虚构引用 |
+| `disagreements` | Agent 分歧、处理理由及尚未解决的问题 |
+| `key_levels` / `watch_conditions` | 关键价位、下一观察条件；可自动追踪的条件采用结构化表达 |
+| `changes_since_previous` | 前一可比报告 ID、结论变化及新证据；首次分析明确标记无前序 |
+| `uncertainties` / `invalidation_conditions` | 信息局限与推翻判断的条件 |
+| `agent_run_ids` / `versions` | Agent、模型、Prompt、特征和 schema 版本引用 |
+| `prediction_ids` | 零到多个可检验预测；没有明确预测时为空数组并说明原因 |
+
+分析报告中的情景说明不自动等同于可执行计划。只有满足四层对象各自契约的内容，才登记为第 4.9 节的对象。
+
+### 4.7.2 Agent 的独立贡献与 Master 职责（v2.4）
+
+| Agent | 必须回答的独立问题 | 职责边界 |
+|---|---|---|
+| Technical | 趋势、动量、波动是否一致，哪里背离？ | 使用确定性指标，不重复计算，不独占结构判断 |
+| Market Structure | 关键结构与价位是什么，突破何时成立或失败？ | 区分已确认结构与待确认假设 |
+| Derivatives | OI、Funding、Basis 如何印证或反驳价格走势？ | 不由 OI 单独推断多空方向或持仓主体 |
+| Liquidity | 成交、盘口和深度是否支持当前走势？ | 标明采样范围，不把挂单推断为确定意图 |
+| Market Regime | 当前环境如何影响其他信号的解释？ | 提供多周期背景，不重复罗列技术指标 |
+| Event/Risk | 哪些异常、信息缺口或外部因素可能推翻结论？ | 无新闻/宏观来源时明确“未覆盖”，禁止编造事件归因 |
+| Master | 如何权衡证据、处理冲突并形成情景判断？ | 必须综合推理，不能仅拼接子报告或多数投票 |
+
+Master 必须区分事实、推断和待验证假设；同源指标或同一行情衍生出的相似观点不能重复计为独立支持。对子 Agent 的关键分歧，给出取舍理由或保留分歧。独立调用不代表统计独立，Agent 数量不能作为置信度依据。
+
+### 4.7.3 AI 分析验收与架构验证（v2.4）
+
+- 内容验收必须覆盖趋势一致、震荡、多周期冲突、衍生品背离、数据缺失、Agent 超时、无明确机会等固定场景。每个场景定义事实、必要证据、必须披露的局限与禁止结论，不要求逐字匹配。
+- 程序校验数值、引用、时间、概率和结构化条件；人工抽查综合判断、反证处理、变化解释与可读性。LLM 评审只作辅助，记录评审模型与版本，不能单独决定发布。
+- 在相同快照、相同预测时点与窗口上配对比较规则基线、单模型综合分析和多 Agent 分析。规则基线用于测量 AI 增益，不替代主要功能；比较预测表现、内容质量、成本、耗时和失败率。
+- 多 Agent 为首版核心方案，各 Agent 是否常驻、何时触发和使用何种模型应由独立贡献与消融结果调整；不以增加调用次数作为功能完成标准。
+
 ## 4.8 Market Snapshot Builder
 
 不应把未经整理的大量原始 K 线直接塞给 LLM。由 Python 根据任务生成快照。
@@ -534,6 +589,23 @@ AI 分析准确性必须独立于模拟交易盈亏。每个预测都要在预�
 | 稳定性 | Regime-conditioned Metrics | 不同市场状态下的表现 | 33.3 |
 
 方向预测的标签定义必须明确，例如以预测窗口末端收益率和预设阈值判定涨跌，避免把微小波动误判为有效方向。**具体阈值与判定规则见 33.3.1（初始 `θ = 0.30%`，可按资产覆盖，变更须升 `evaluator_version`）。**
+
+## 5.2.1 分析内容质量（v2.4，P0）
+
+预测指标评价可检验产物，以下维度评价分析报告本身；二者分开展示，不以单一总分掩盖事实错误。
+
+| 维度 | 评价内容 | 方法 |
+|---|---|---|
+| 事实与证据 | 数值、引用、时间与快照一致；无虚构证据 | 确定性校验 + 人工抽查 |
+| 推理一致性 | 结论、情景、概率和失效条件不自相矛盾 | 规则检查 + 场景化人工审阅 |
+| 综合能力 | 能处理多周期冲突、反证和缺失数据 | 固定案例与人工量表 |
+| 信息增量 | 超越指标复述；说明相较上一轮的新变化 | 相同快照的配对盲评；记录平局 |
+| 可检验性 | 判断有时间窗口、观察与失败条件 | schema 校验 + 结构化条件检查 |
+| 阅读价值 | 结论清晰，用户知道下一步观察什么 | 用户“有用/无用/原因”反馈与阅读任务验收 |
+
+人工量表按维度采用 `0=缺失或错误、1=部分满足、2=充分满足`，保留理由、评审人及版本。事实错误单独计数；核心结论依赖错误证据时不得判为通过。统计事实校验通过率、关键错误数、人工各维度分布和反馈数量；没有反馈不视为有用。
+
+第 15.2 节的 P0 验收须包含 4.7.3 的固定场景及上述检查；没有交易机会的报告同样参加内容质量评价。预测指标未积累足够样本时，不阻断内容与系统功能验收，但必须标记能力尚未被统计验证。
 
 ## 5.3 分层报告
 
@@ -771,8 +843,8 @@ Dry-run 不等于真实撮合，也不等于交易所 Demo 环境。必须通过
 
 建议顺序：
 
-1. **Market Overview**：BTC/ETH 价格、多周期变化、市场状态。
-2. **AI Market Analysis**：最终分析结论、Agent 观点、支持和反对证据。
+1. **AI Market Analysis**：主要判断、相较上一轮的变化、主要/替代情景、下一观察条件及失效条件；证据和 Agent 观点可展开。
+2. **Market Overview**：BTC/ETH 价格、多周期变化、市场状态，为 AI 结论提供上下文。
 3. **Market Structure**：趋势结构、支撑阻力、突破和回踩。
 4. **Trading Opportunities**：机会列表、条件、风险和失效状态。
 5. **Prediction Tracking**：历史预测与真实行情对照。
@@ -788,8 +860,12 @@ Dry-run 不等于真实撮合，也不等于交易所 Demo 环境。必须通过
 - 市场快照时间。
 - 当前市场状态。
 - 综合结论。
-- 各 Agent 分析。
-- 支持证据和反对证据。
+- 相较前一可比报告的变化及原因。
+- 主要/替代情景、下一观察条件与适用时间窗口。
+- 各 Agent 分析及 Master 对关键分歧的处理。
+- 可定位到快照字段或工具结果的支持证据和反对证据。
+- 分析模式（实时/补跑/事后研究）、发布时间及数据截止时间。
+- “有用/无用/原因”反馈入口，反馈不修改原始报告。
 - 不确定性和数据缺失。
 - 预测时间窗口。
 - 关键价位和触发条件。
@@ -1456,24 +1532,24 @@ Freqtrade 的具体配置、REST API 字段、Futures 行为和止损/止盈能�
 | Phase 1 | Binance 数据采集、历史补数、数据质量 | 可靠行情数据层 | 1 |
 | Phase 2 | 指标、结构、衍生品、市场状态 | Market Intelligence | 1 |
 | **Phase 2.5** | **异动检测规则引擎 + 分级** | **可识别异动的确定性层** | 0.5 |
-| **Phase 3.0** | **调度中心 + 通知网关（飞书）+ 模板** | **可用的推送管道** | 1 |
-| **Phase 3.1** | **企业微信渠道（自建应用 + 微信插件 / 群机器人）** | **推送可触达个人微信** | 0.5 |
-| Phase 3 | Snapshot、LLM Gateway、多 Agent | AI 分析报告 | 1.5 |
-| **Phase 3.5** | **定时分析任务编排 + 事件驱动联动** | **每天自动产出的结论** | 0.5 |
+| Phase 3 | Snapshot、LLM Gateway、专业 Agent 与 Master、内容质量场景验收 | 可手动生成的 AI 综合报告 | 1.5 |
+| Phase 3A | 定时/事件触发、调度中心、一个主要通知渠道 | 每天自动产出且可触达的 AI 分析 | 1 |
+| Phase 3B（P1） | 第二通知渠道、企业微信扩展 | 按实际需求增强触达 | 0.5 |
 | Phase 4 | 信号生命周期、预测追踪 | 可持续追踪的预测记录 | 1 |
-| Phase 5 | 评估体系（含双轨）、历史研究、回测 | AI 分析质量报告 | 1.5 |
-| Phase 6 | Dashboard、实验比较、日报 | 完整研究工作台 | 2 |
+| Phase 5 | 内容质量、预测评估、规则/单模型/多 Agent 配对验证 | AI 分析质量与增量价值报告 | 1.5 |
+| Phase 6 | 完善分析阅读、历史复盘和基础筛选 | 核心分析工作台 | 1 |
+| Phase 6A（P1） | 完整实验比较、相似行情、回测、经济性轨道 | 研究与经济性验证扩展 | 2 |
 | Phase 7 | Freqtrade 单实例 PoC、Adapter | 模拟执行验证 | 1 |
 | Phase 8 | 三账户隔离、执行评估和健康监控 | 完整辅助验证环境 | 1 |
 
 **研发优先级原则：Phase 1–6 是产品核心；Phase 7–8 是辅助验证。**
 
-> **v2.3 修正**：v2.2 中企微渠道的阶段号为 `Phase 3.2`，排在 `Phase 3` 之前，视觉上像是 Phase 3 的前置依赖，实际并非如此。统一改为 **`Phase 3.1`**，使 `2.5 < 3.0 < 3.1 < 3 < 3.5` 严格单调递增，阶段顺序与实际依赖关系一致。里程碑 M2.5 的时点同步改为「Phase 3.1 末」。
+> **v2.4 修订**：阶段号表示依赖顺序。Phase 3 先完成可阅读的 AI 综合分析，Phase 3A 接入定时、异动与一个主要渠道；Phase 3B 为可选扩展。分析详情与基本阅读界面随 Phase 3 交付，Phase 6 负责完善，不能到最后才让用户看到分析。第 33 章评估契约在 Phase 3 登记首批预测前定稿。
 
 **v2.1 调整说明：**
 
-- Phase 2.5 / 3.0 / 3.5 被提前到 Phase 3 之前与之中，理由是「异动 → 推送」和「定时 → 推送」是系统的日常价值出口。如果先做完完整多 Agent 分析体系再补推送，会导致很长的「只能打开网页看」的空窗期。
-- Phase 3.0 的通知网关与异动引擎**不依赖 LLM**，可在 Phase 3 完成前就独立跑通并验证。这既降低了首条链路的交付风险，也让 LLM 故障时的降级路径（推送确定性结论）自然成立。
+- 异动规则与通知适配不依赖 LLM，可以独立开发；首版产品验收以 AI 分析及其日常使用流程为中心。
+- Phase 3A 将定时与重要异动接入同一分析流程；LLM 故障时规则快报保持可用，但必须标明 AI 分析未完成。
 - Freqtrade 相关阶段（7–8）严格排在评估体系之后：没有可信的评估基准时，模拟盈亏没有解释价值。
 
 **v2.3 补充：契约层章节落在哪个阶段**
@@ -1486,9 +1562,9 @@ v2.3 新增的第 29–38 章不是独立阶段，而是**嵌入既有阶段**�
 | 30 数据契约 | Phase 0–1 | 核心表在 Phase 0 建，Phase 1 补齐 |
 | 31 API 契约 | Phase 0–6 | 随各阶段端点增量落地；错误码字典 Phase 0 定稿 |
 | 32 配置体系 | Phase 0 | 配置必须在骨架阶段就位，否则后续每个模块都会自带配置 |
-| 33 评估口径 | Phase 4–5 | **必须在 Phase 4 写预测追踪之前定稿**，否则早期数据无法复用 |
+| 33 评估口径 | Phase 3–5 | **必须在 Phase 3 登记首批预测前定稿**，Phase 4–5 实现追踪与统计 |
 | 34 鉴权 | Phase 0 | 默认开启即需在骨架阶段实现 |
-| 35 前端 | Phase 6 | 但 35.5 的数据质量表达规则影响 Phase 1 起的接口设计 |
+| 35 前端 | Phase 3、6 | Phase 3 交付分析详情与基本阅读，Phase 6 完善；35.5 影响 Phase 1 起的接口设计 |
 | 36 测试与工程 | Phase 0 | CI 与测试骨架在 Phase 0 建立；36.3 的清单随各阶段补充 |
 | 37 可观测性 | Phase 0–1 | 指标从第一天就要埋，否则 Phase 1 结束后无法回溯 |
 | 38 回测一致性 | Phase 5 | 在回测引擎开工前落地 |
@@ -1500,11 +1576,11 @@ v2.3 新增的第 29–38 章不是独立阶段，而是**嵌入既有阶段**�
 | 检查点 | 时点 | 判定标准 |
 |---|---|---|
 | M1 数据可信 | Phase 1 末 | 断线补数后 K 线无缺口，重复推送不产生重复记录 |
-| M2 能收到推送 | Phase 3.0 末 | 人工构造一次异动，2 分钟内收到飞书卡片 |
-| M2.5 微信可达 | Phase 3.1 末 | 人工构造一次异动，个人微信收到异动快报（含微信插件降级场景） |
-| M3 每天有结论 | Phase 3.5 末 | 连续 3 天的定时分析按时产出并送达 |
+| M2 AI 分析可读可信 | Phase 3 末 | 手动生成完整报告，通过 4.7.3 的事实、反证、冲突和缺失数据场景验收 |
+| M2.5 主要渠道可达 | Phase 3A 末 | 收到分析摘要并可打开对应详情；移动阅读启用时在手机实测 |
+| M3 每天有结论 | Phase 3A 末 | 连续 3 天定时分析按时产出，展示结论变化与昨日复盘 |
 | M4 判断可被检验 | Phase 4 末 | 每条结论都能在到期后被自动判定对错 |
-| M5 能回答"谁更准" | Phase 5 末 | 能输出按 Agent/模型/Prompt 分组的准确率与经济性对比 |
+| M5 能检验 AI 增量价值 | Phase 5 末 | 输出配对对照、内容质量和预测表现；样本不足时明确尚不能判定优劣 |
 | M6 有模拟验证环境 | Phase 8 末 | 三账户独立运行，对账无未解释差异 |
 
 ---
@@ -1570,7 +1646,7 @@ v2.3 新增的第 29–38 章不是独立阶段，而是**嵌入既有阶段**�
 | **事件去重语义（v2.3）** | **去重键 = `(fingerprint, revision)`** | 支持同一事件的 AI 解读升级投递（22.4.4.1） |
 | **鉴权机制（v2.3）** | **静态 Bearer Token，默认开启** | 单用户本地系统，不引入用户体系（第 34.3 节） |
 | **公网暴露（v2.3）** | **禁止；仅企微验证期开放一次性无状态回调入口** | 解决 13.4 与 28.2 的冲突（第 34.6 节） |
-| **评估基准价（v2.3）** | **信号所属 timeframe 的最后一根已收盘 K 线收盘价** | 与入场价严格区分（第 33.2 节） |
+| **评估基准价（v2.4）** | **预测发布时已接收且有效的新鲜成交价** | 快照研究基准单存；与入场价严格区分（第 33.2 节） |
 | **回测一致性（v2.3）** | **特征单一实现源 + `feature_version` 逐值校验** | 防「口径漂移」污染评估（第 38 章） |
 
 ## 18.1 尚待实验确定的参数
@@ -1603,7 +1679,7 @@ v2.3 新增的第 29–38 章不是独立阶段，而是**嵌入既有阶段**�
 | 方向判定收益率阈值 `θ` | `0.30%` | 样本满 200 条后按资产分别校准 | 33.3.1 |
 | 最小样本量 `N_min` | 比率 30 / Brier 100 / 经济性 100 | 按实际指标的置信区间宽度反推 | 33.6.1 |
 | 评估观察粒度 `Δt` | `15m` | 需与模拟执行的成交粒度一致 | 33.1 |
-| 去重保留比例 | 重叠 > 50% 视为重叠，每组最多 3 条 | 按预测频率与窗口长度调整 | 33.7.1 |
+| 去重重叠比例 | 重叠 > 50%，按发布时间顺序保留非冗余窗口 | 不设跨整个分组的样本数量上限；阈值变更升口径版本 | 33.7.1 |
 | 异动触发源市场 | `USDM_FUTURES` | 若主标的切换需同步改规则 | 29.6.2 |
 | 通知合并等待窗口 | `30s` | 首投与 AI 解读的合并策略 | 22.4.4.1 |
 | 账户级每日配额 | `60` | 按实际推送量与用户疲劳度调整 | 22.4.4.2 |
@@ -1685,7 +1761,11 @@ ai-crypto-market-intelligence/
 
 # 20. 第一版 MVP 定义
 
-第一版 MVP 不应以自动模拟交易为完成标志，但**必须包含「定时分析 + 异动推送」**，否则系统没有日常使用价值。
+第一版 MVP 的完成标志是**持续产出高质量 AI 综合分析，并能查看证据、比较变化和追踪结果**。手动、定时及重要异动触发共用分析流程；推送服务于分析触达，模拟交易为后续辅助验证。
+
+**首版交付层级**：第 30 章按首版使用的表增量落地，P1 表不要求预建；第 31、35 章的端点与页面按同样范围交付，研究实验全套页面、模拟交易页面与多渠道运营页面不作为 MVP 阻断项。第 15 章的双轨经济性和企业微信验收按本章范围归入 P1，首版必需的内容质量、基本预测追踪与单渠道验收仍需通过。
+
+**v2.4 范围原则：保留 AI 分析深度，收敛外围广度。** 首版必须交付可读、可追溯、可复盘的多 Agent 综合分析；多渠道、完整研究实验平台和模拟交易不阻断交付。第 4.1 节 P0 为核心目标能力清单，具体首版交付范围以本章为准。
 
 建议以下列能力作为 MVP 验收：
 
@@ -1700,20 +1780,20 @@ ai-crypto-market-intelligence/
 
 ### 20.2 运行层（v2.1 新增，必需）
 
-7. 调度中心可运行定时任务：15m 结构分析、1h 综合分析、4h 状态分析、日报。
-8. 异动检测引擎可按规则识别涨跌幅、波动率、成交量、衍生品异动并分级。
-9. 异动与定时分析结论可推送至飞书，含模板、去重、冷却、配额。
-10. 异动与定时分析结论可推送至企业微信（自建应用/微信插件 或 群机器人），且能触达个人微信。
-11. 推送失败有重试与降级，且记录 `notification_events`。
-12. 关机后恢复能补跑错过的分析任务并标注「补跑」。
+7. 提供手动分析、1h 定时综合分析、日报复盘及重要异动触发；15m/4h 独立 LLM 任务后续按价值与预算启用，多周期快照仍为首版必需。
+8. 首版交付价格、成交量及衍生品重要异动规则，服务于分析触发；其余规则增量补齐。
+9. 选择一个主要通知渠道完成分析摘要、详情入口、去重、冷却与配额；默认飞书，可按实际使用入口替换为企业微信。
+10. 多渠道广播、企业微信作为第二渠道及其他渠道扩展为 P1，不阻断首版。
+11. 推送失败有重试与降级，且记录 `notification_events`；移动端作为主要阅读入口时，必须验收手机打开详情、鉴权与阅读完整流程。
+12. 关机后恢复优先补数据并生成当前分析；错过任务显式记录，历史分析按 `BACKFILL` 隔离，不逐条补发过时建议，不混入实时预测成绩。
 
 ### 20.3 追踪与评估
 
 13. 预测到期后自动追踪实际行情。
 14. 提供方向准确率、区间命中率、MFE/MAE 等基本评估。
-15. 提供「双轨评估」：纯统计正确性轨道 + 扣除成本后的经济性轨道。
-16. Dashboard 展示当前市场、AI 分析和历史预测表现。
-17. 能按 Agent、模型、Prompt 和市场状态查看评估结果。
+15. 提供第 5.2.1 节的分析内容质量检查和反馈；首版积累预测正确性数据，经济性轨道在有完整计划与明确成本模型后作为 P1 接入，不为无交易计划的报告虚构收益。
+16. Dashboard 以 AI 综合报告、相较上一轮的变化、关键观察条件和历史复盘为中心，市场图表与指标提供上下文；报告满足第 4.7.1 节。
+17. 留存 Agent、模型、Prompt 和市场状态维度，提供基础筛选与规则/单模型/多 Agent 配对实验；完整分组排名、研究实验工作台、相似行情检索为 P1，样本不足时只显示计数与案例。
 
 ### 20.4 工程化底座（v2.3 新增，必需）
 
@@ -1919,7 +1999,7 @@ class DeliveryStatus(str, Enum):
     SKIPPED = "SKIPPED"        # 被治理层拦截（去重/冷却/配额/免打扰），未发出
 ```
 
-首期实现 `FeishuChannel`（Phase 3.0）；`WeComAppChannel`（企业微信自建应用 + 微信插件）与 `WeComBotChannel`（企业微信群机器人）于 Phase 3.1 接入；**邮件、Discord、Telegram 作为后续扩展**，实现同一接口即可接入，无需改动上游。
+首期在 Phase 3A 完成一个主要渠道，默认 `FeishuChannel`，也可按实际入口选择 `WeComAppChannel`。第二渠道与其他企微适配于 Phase 3B（P1）接入；邮件、Discord、Telegram 后续按同一接口扩展。
 
 **多渠道设计原则**：
 
@@ -2399,7 +2479,9 @@ Anomaly Engine 检出 CRITICAL
 若登记成功，追加推送信号摘要         <-- revision 2 (revision_reason=SIGNAL_REGISTERED)
 ```
 
-这样保证**即使 LLM 全挂，用户依然在 1 分钟内知道市场出事了**，而不是等到 AI 分析结束才有感知。
+**v2.4 投递门禁**：以上 revision 表示允许的更新阶段，不要求每阶段都新发消息。首条快报后，仅当 AI 解读或登记预测改变主要情景、风险等级或关键观察/行动条件时追加推送；普通解释补充更新详情并进入摘要。渠道支持原消息更新时优先更新。提供事件静默及“有用/噪声/原因”反馈（鉴权 `POST /api/v1/anomalies/events/{event_id}/feedback`；记录于 `anomaly_evaluations.detail.user_feedback` 的追加列表，不覆盖历史反馈），与技术指纹去重分别统计。反馈量小不自动改阈值。
+
+这样保证即使 LLM 不可用，用户仍能及时收到确定性快报；AI 恢复后提供有信息增量的综合解读。
 
 **v2.3 修正**：原流程注释「同一 fingerprint 视为同一事件，升级而非新增」与 22.4.4 的指纹去重规则冲突（同一 fingerprint 在 24h TTL 内会被拦截第二次投递）。修正为通过 `revision` 区分同一事件的不同投递轮次，详见 22.4.4.1。
 
@@ -2503,10 +2585,10 @@ Anomaly Engine 检出 CRITICAL
 
 - 每个任务实例的幂等键：`{job_id}:{scheduled_at}`。
 - 同一幂等键重复触发直接返回已有结果，不重复执行。
-- 本地关机/休眠错过时间窗时，恢复后由 `scheduler` 执行**补跑**：
+- 本地关机/休眠恢复时，先恢复数据并执行当前分析。历史任务按类型处理：数据与到期评估按窗口补齐；历史 AI 分析默认合并为缺口复盘，显式要求逐窗补生成时使用 `BACKFILL`，不纳入实时预测指标。补跑任务遵循以下约束：
   - 补跑上限：默认只补最近 24h 内、且未超过任务 `max_backfill_window` 的时间窗。
   - 补跑任务标记 `is_backfill=true`，输出中显式标注「补跑」。
-  - 补跑产生的推送需标记 `backfill`，且不占用实时推送配额（但仍计入每日总配额）。
+  - 补跑结果默认只进恢复摘要或日报，不逐条推送过时建议；确需推送时标记 `backfill`，不占实时配额但计入每日总配额。
   - 超出上限的时间窗标记为 `MISSED`，在日报中列出，不得静默丢弃。
 
 ### 23.1.4 任务执行保障
@@ -3394,6 +3476,7 @@ PRIMARY KEY (id)
 | `symbol` / `market_type` | TEXT | |
 | `as_of` | TIMESTAMPTZ | **数据截止时刻**（交易所时间），所有特征的数据上界 |
 | `created_at` | TIMESTAMPTZ | 构建完成时刻 |
+| `available_as_of` | TIMESTAMPTZ | 本次输入实际可用截止时间；按 received_at/版本引用校验 |
 | `time_range_start` / `time_range_end` | TIMESTAMPTZ | 快照覆盖的数据区间 |
 | `data_quality` | TEXT | 整体质量标记（4.3 的五态） |
 | `data_quality_detail` | JSONB | 各周期/各数据源的分项质量 |
@@ -3406,7 +3489,7 @@ PRIMARY KEY (id)
 CREATE INDEX idx_snapshots_lookup ON market_snapshots (symbol, market_type, as_of DESC);
 ```
 
-> **防未来数据泄漏的强制约束**：`as_of` 之后的任何数据**不得**进入 `content`。构建器在写入前必须校验：`content` 中所有时间戳 ≤ `as_of`。此校验必须有一个自动测试用例（36.3 / 15.3）。
+> **防未来数据泄漏的强制约束**：市场事实的事件时间必须 ≤ `as_of`；采集、构建等元数据时间不与市场事件时间混用。快照另存 `available_as_of`（实际信息可用截止时刻），实时输入的 `received_at` 必须 ≤ 该时刻；历史回放按当时接收时间或不可变版本引用切片，不把后补数据伪装成当时已知。缺少可用时间证明的历史输入标记为事后研究。分别测试事件时间、接收时间与数据修订。
 
 ### `snapshot_data_refs`
 
@@ -3478,6 +3561,29 @@ PRIMARY KEY (id)
 ```
 
 ## 30.4 AI 与研究
+
+### `analysis_reports`（v2.4：主要产品对象）
+
+| 字段 | 类型 | 说明 |
+|---|---|---|
+| `analysis_id` | TEXT | PK；关联各 `agent_runs.analysis_id` |
+| `symbol` / `market_type` | TEXT | 标的与市场 |
+| `market_snapshot_id` | TEXT | FK → market_snapshots |
+| `snapshot_as_of` | TIMESTAMPTZ | 市场事实截止时间；输入实际可用边界见关联快照 `available_as_of` |
+| `published_at` | TIMESTAMPTZ NULL | 首次用户可见时间，发布时固定；未发布时为空 |
+| `analysis_mode` | TEXT | `LIVE` / `BACKFILL` / `RETROSPECTIVE` |
+| `status` | TEXT | `RUNNING` / `COMPLETE` / `PARTIAL` / `FAILED` |
+| `previous_analysis_id` / `supersedes_id` | TEXT NULL | 前一可比报告与修订来源，FK → analysis_reports |
+| `content` | JSONB | 第 4.7.1 节报告内容；发布后的内容不可覆盖，修订产生新报告 |
+| `schema_version` / `versions` | TEXT / JSONB | 内容 schema 与模型/Prompt/特征版本 |
+| `degraded` / `degraded_reason` | BOOLEAN / TEXT NULL | 降级标记与原因 |
+| `created_at` | TIMESTAMPTZ | 创建时间 |
+
+索引：`(symbol, market_type, published_at DESC)`；预测通过 `signals.analysis_id` 关联。原有分析列表/详情 API 返回报告对象；没有信号的报告仍能检索、阅读与反馈。
+
+### `analysis_feedback`（v2.4）
+
+字段：`feedback_id`（PK）、`analysis_id`（FK）、`useful`（BOOLEAN NULL）、`reason`（TEXT NULL）、`review_kind`（`USER`/`HUMAN_REVIEW`/`LLM_ASSISTED`）、`rubric_version`、`dimension_scores`（JSONB）、`reviewer_ref`、`created_at`。记录只追加；用户反馈与辅助评审分别统计。通过鉴权的 `POST /api/v1/analysis/{analysis_id}/feedback` 追加反馈；详情返回当前反馈摘要。
 
 ### `agent_runs` / `agent_outputs`
 
@@ -3599,8 +3705,17 @@ PRIMARY KEY (signal_id)
   created_at TIMESTAMPTZ NOT NULL
   expires_at TIMESTAMPTZ NOT NULL
   -- 预测评估所需
-  entry_price NUMERIC(38,12) NULL     -- 基准价格（5.1 要求「基准价格」固定）
-  probability NUMERIC(10,6) NULL      -- 显式概率（与 confidence 区分，见 33.4）
+  analysis_id TEXT NOT NULL REFERENCES analysis_reports(analysis_id)
+  analysis_mode TEXT NOT NULL      -- LIVE / BACKFILL / RETROSPECTIVE，与报告一致
+  snapshot_as_of TIMESTAMPTZ NOT NULL
+  published_at TIMESTAMPTZ NULL    -- 预测首次可见时间；晚于报告时按自身实际发布时间
+  reference_price NUMERIC(38,12) NULL -- 发布后评价基准 P0，见 33.2
+  reference_price_at TIMESTAMPTZ NULL
+  reference_price_source TEXT NULL
+  snapshot_reference_price NUMERIC(38,12) NULL -- 快照时研究基准，单独报告
+  entry_price NUMERIC(38,12) NULL     -- 计划/实际入场语义，不能替代评估基准；旧版基准值迁移至独立字段，保留旧口径版本
+  scenario_probabilities JSONB NULL -- {up,down,flat}；事件与阈值见 33.3/33.4
+  probability NUMERIC(10,6) NULL      -- 辅助条件二分类概率 P(UP | 非 FLAT)，与 confidence 区分
   prediction_window JSONB NOT NULL   -- {"start":..., "end":..., "horizon":...}
 ```
 
@@ -3757,6 +3872,7 @@ PRIMARY KEY (evaluation_id)
   max_adverse_pct NUMERIC(18,8) NOT NULL
   reversal BOOLEAN NOT NULL      -- 是否在 horizon 内反向
   is_directional BOOLEAN NOT NULL
+  detail JSONB NOT NULL DEFAULT '{}' -- 分规则目的评价；user_feedback 为只追加反馈列表
   evaluated_at TIMESTAMPTZ NOT NULL
 ```
 
@@ -3944,7 +4060,7 @@ PRIMARY KEY (version_id)
 |---|---|
 | 行情 | `market_candles`、`market_trades`、`orderbook_snapshots`、`market_tickers`、`funding_history`、`open_interest_history`、`instrument_metadata`、`market_data_quality_events`、`market_data_sync_runs` |
 | 特征与快照 | `market_metrics`、`market_regimes`、`market_structure_features`、`sr_zones`、`market_snapshots`、`snapshot_data_refs` |
-| AI 与研究 | `agent_runs`、`agent_outputs`、`model_runs`、`prompt_versions`、`agent_versions`、`research_reports`、`historical_pattern_matches`、`strategy_experiments`、`experiment_results` |
+| AI 与研究 | `analysis_reports`、`analysis_feedback`、`agent_runs`、`agent_outputs`、`model_runs`、`prompt_versions`、`agent_versions`、`research_reports`、`historical_pattern_matches`、`strategy_experiments`、`experiment_results` |
 | 信号与预测 | `signals`、`signal_events`、`signal_snapshots`、`prediction_observations`、`prediction_evaluations`、`analysis_evaluation_runs`、`evaluation_results` |
 | 异动与通知 | `anomaly_rules`、`anomaly_events`、`anomaly_evaluations`、`notification_templates`、`notification_events`、`notification_dead_letters`、`notification_preferences`、`notification_channel_state` |
 | 调度与系统 | `scheduled_jobs`、`job_runs`、`job_locks`、`audit_logs`、`system_events`、`tool_invocations`、`llm_cost_records`、`config_versions` |
@@ -4187,7 +4303,8 @@ POST /api/v1/analysis/runs
 | GET | `/api/v1/analysis/runs/{run_id}` | 运行状态与结果 |
 | GET | `/api/v1/analysis/runs/{run_id}/stream` | SSE 进度 |
 | GET | `/api/v1/analysis/latest` | 最近一次分析（可按 symbol/market_type 过滤） |
-| GET | `/api/v1/analysis/{analysis_id}` | 分析详情（含各 Agent 输出） |
+| GET | `/api/v1/analysis/{analysis_id}` | 分析报告详情（4.7.1，含 Agent 输出与反馈摘要） |
+| POST | `/api/v1/analysis/{analysis_id}/feedback` | 追加用户反馈或授权评审，支持幂等键 |
 | GET | `/api/v1/agents/performance` | Agent 维度评估（口径见第 33 章） |
 
 ### 研究与预测
@@ -4220,6 +4337,7 @@ POST /api/v1/analysis/runs
 | PUT | `/api/v1/anomalies/rules/{rule_id}` | **创建新版本**（不改旧版本，见 30.6） |
 | GET | `/api/v1/anomalies/events` | 异动事件列表 |
 | GET | `/api/v1/anomalies/events/{id}` | 单事件详情（含各 revision 的投递记录） |
+| POST | `/api/v1/anomalies/events/{event_id}/feedback` | 追加有用/噪声反馈；支持幂等键 |
 | POST | `/api/v1/anomalies/scan` | 手动触发扫描 |
 | GET | `/api/v1/anomalies/evaluations` | 异动后表现统计（规则有效率） |
 
@@ -4554,7 +4672,7 @@ config/
 
 | 符号 | 含义 |
 |---|---|
-| `t0` | 预测创建时刻（`signals.created_at`） |
+| `t0` | 预测首次对用户可见时刻（`signals.published_at`）；创建时间与快照时间分别保存 |
 | `P0` | **基准价格**，见 33.2 |
 | `T` | 预测时间窗口（`signals.prediction_window`），`[t0, t1]` |
 | `t1` | 窗口终点 = `t0 + time_horizon` |
@@ -4565,27 +4683,31 @@ config/
 | `Δt` | 时间粒度（评估周期，如 `15m`） |
 | `N` | 样本数 |
 
-**评估粒度**：`Δt` 固定为 `15m`。所有窗口内的行情以 `15m` 已收盘 K 线为观察点序列。
+**评估粒度**：常规观察序列采用 `15m` 已收盘 K 线；`t1 = t0 + time_horizon` 不因粒度改变。终点价取不晚于 `t1` 的最近已收盘 `1m` K 线收盘价，保存实际价格时刻；陈旧超过 60 秒或缺失时标记 `SKIPPED_NO_ENDPOINT`。端点取价误差需在报告披露。
 
-> 若 `time_horizon` 不是 `15m` 的整数倍（如 `4h` = 16 × 15m，OK；`45m` = 3 × 15m，OK），窗口向上取整到最近的 `15m` 边界。
+路径指标只使用完整位于 `[t0,t1]` 内的 K 线。边界不足 15m 的部分用完整位于窗口内的 1m K 线补充，禁止将覆盖发布时间之前或截止时间之后的整根 K 线极值纳入。更细粒度仍无法确定的目标/止损先后顺序标记 `AMBIGUOUS`，不推断路径。
 
 ## 33.2 基准价格 P0 的定义
 
 **这是最容易被实现者搞错的一项，必须唯一化。**
 
 ```text
-P0 = 该信号所属 timeframe 的、在 t0 时刻**最新一根已收盘** K 线的 close
+P0 = 同一标的与市场中，published_at 当时已接收的最新有效成交价格
 ```
 
 | 规则 | 说明 |
 |---|---|
-| 取自**信号所属 timeframe**，不是评估粒度 | 1h 信号用 1h 收盘价，不用 15m 价 |
-| 必须是**已收盘** K 线 | 未收盘 K 线的价格会变动，会让基准价漂移（29.5） |
-| 取 `t0` **之前**的最后一根 | 不含 `t0` 当根（`t0` 时刻该根可能仍在变动） |
-| 一次性确定并落库 | 存入 `signals.entry_price`（30.5），**事后不得修改**（5.1） |
-| 数据缺失时 | 该预测标记 `SKIPPED_NO_BASE`，**不进入评估分母**，且在报告中显式列出数量 |
+| 时间条件 | 成交的交易所时间与本地接收时间均不得晚于 `published_at`，不使用事后补到的价格 |
+| 时效门槛 | 最新成交距发布时间不得超过 5 秒；门槛可配置并纳入 `evaluator_version` |
+| 一次性确定并落库 | 保存 `reference_price`、`reference_price_at`、来源与接收时间引用；不可事后覆盖 |
+| 不使用未收盘 K 线 | 最新成交是独立价格观测，不改变 29.5 的指标与异动仅使用已收盘 K 线约束 |
+| 数据缺失或陈旧 | 标记 `SKIPPED_NO_BASE`，不进入指标分母，显式展示数量与覆盖率 |
+| 快照研究基准 | 另存 `snapshot_reference_price`，可取快照所属周期最后已收盘价；仅用于单独的快照研究报告 |
+| 历史兼容 | 旧版基准与新基准分口径展示；缺少发布时原始价格时不事后伪造新基准 |
 
 > `P0` 与 `entry_zone` 是不同的东西：`entry_zone` 是「计划入场区间」（可能尚未触发），`P0` 是「评估基准价」。**评估用 `P0`，不用入场价**——否则「未触发」与「触发」样本被混为一谈。
+
+**评价模式隔离（v2.4）**：实时主报告仅统计 `LIVE` 且发布时未见结果的预测。`BACKFILL` 与 `RETROSPECTIVE` 单独统计；历史输入不含未来行情仍不足以消除模型训练知识带来的污染。录制输出保证重跑一致性，不自动证明历史预测有效。报告必须分别显示快照截止、发布时间、分析延迟和模式。
 
 ## 33.3 方向评估
 
@@ -4630,7 +4752,7 @@ r(t1) < -θ  →  'DOWN'
 borderline_rate = #{ |r(t1)| < θ } / |S|
 ```
 
-`borderline_rate` 超过 30% 意味着 `θ` 设定过高，评估几乎没有区分力，应下调。报告需展示该比率。
+报告展示 `borderline_rate`。较高比例可能来自真实低波动环境或阈值与周期不匹配，不能据此自动下调阈值。阈值按资产与预测窗口预先固定，仅在训练/校准区间调整，冻结后在独立窗口验证，禁止为改善测试成绩事后改口径。
 
 ## 33.4 概率与置信度
 
@@ -4641,19 +4763,23 @@ borderline_rate = #{ |r(t1)| < θ } / |S|
 | `confidence` | 模型**自述**的主观置信度（4.7 已声明不等于统计胜率） | Agent 输出 |
 | `probability` | 用于 Brier Score 的**显式概率** | Agent 输出的 `scenario_probabilities` 中的方向概率 |
 
-**Brier Score 只能使用 `probability`**。若 Agent 未输出 `probability`，该样本的 Brier 为 `NULL`（**不参与** Brier 统计），并在报告中标注「Brier 样本覆盖率 = x%」。
+**Brier Score 只能使用事件定义明确的显式概率，不能使用 `confidence`**。三分类使用 `scenario_probabilities`，辅助二分类使用按 33.4.2 定义的 `probability`。对应概率缺失时该指标为 `NULL`，不参与统计并报告覆盖率；仅有报告叙事情景、未映射到 UP/DOWN/FLAT 时不能直接计算方向 Brier。
 
 > **口径要点**：把 `confidence` 当概率用是常见错误——`confidence` 是模型对「自己判断有多确定」的主观评分，其分布与实际命中率无关，直接代入 Brier 会得到无意义的分数。
 
 ### 33.4.2 Brier Score
 
-对二分类（预测 UP / DOWN，概率 `p`）：
+主概率评价采用互斥完备的 `UP/DOWN/FLAT` 三分类概率，概率均在 `[0,1]` 且总和为 1：多分类 Brier = `mean(Σ_k (p_k - y_k)^2)`，范围 `[0,2]`。与仅用当时训练窗口估计的类别频率基线比较，不能使用测试期频率拟合基线。
+
+二分类为辅助评价：`p = P(UP | UP 或 DOWN)`，由预测时保存的 `p_up / (p_up + p_down)` 得到；分母为零时不适用。实际 FLAT 不进入该条件指标，须同时显示排除数量与三分类主指标。不得直接将未归一化的 UP 概率用于条件二分类。
+
+对上述二分类事件，概率 `p`：
 
 ```text
 Brier = mean( (p - y)^2 )     其中 y ∈ {1, 0}
 ```
 
-- 范围 `[0, 1]`，越小越好；随机猜测为 `0.25`；
+- 范围 `[0, 1]`，越小越好；恒定预测 0.5 时为 `0.25`。类别不平衡时，应比较预先固定的历史频率基线及 Brier Skill Score，不能把 0.25 当作通用有效门槛；
 - 计算样本：`probability` 非空、实际标签为 UP/DOWN（FLAT 不计入）；
 - **必须同时输出「Brier 样本覆盖率」**（参与计算的样本数 / 全部样本数）。
 
@@ -4719,7 +4845,7 @@ MAE% = max over t in T of  ( (P0 - min(C(t), L(t))) / P0 )   for LONG
 
 **口径要点**：
 
-- 使用 `15m` K 线的 `high`/`low`（含影线），不使用收盘价——MFE/MAE 的意义在于「曾经走多远」；
+- 使用 33.1 定义的窗口内 `15m` 与边界 `1m` K 线 `high`/`low`（含影线），禁止使用跨越窗口边界的整根极值；
 - 对 `NEUTRAL` 方向预测，MFE/MAE 不计算（无方向可言），标 `NOT_APPLICABLE`；
 - **必须同时给出观察窗口长度**（`time_horizon`），因为 MFE/MAE 随窗口长度单调增长，不可跨窗口比较。跨周期聚合时必须按 `time_horizon` 分组。
 
@@ -4749,6 +4875,7 @@ MAE% = max over t in T of  ( (P0 - min(C(t), L(t))) / P0 )   for LONG
 
 **口径要点**：
 
+- `Invalidation Accuracy` 只有在存在独立真实标签（确定性条件或独立人工标注）时计算。没有真实标签时只记录条件是否触发及证据，不把 LLM 自评当作准确率；文本裁判与预测模型需分别记录。
 - **结构化条件必须优先实现**。文本条件判定引入 LLM 不确定性，会污染评估结论；仅在无法结构化时使用文本判定，且**该部分的评估结果单独分组**，不与结构化条件混合统计；
 - 文本条件判定记录 `judged_by='llm'` 与 `model_id`，允许按模型分组对比；
 - `Invalidation Accuracy` 是**双向**指标：既要看「该失效的被识别出来」，也要看「不该失效的没被误判」。仅报告召回会鼓励过度触发失效。
@@ -4757,8 +4884,9 @@ MAE% = max over t in T of  ( (P0 - min(C(t), L(t))) / P0 )   for LONG
 
 | 指标 | 定义 | 口径要点 |
 |---|---|---|
-| **Opportunity Precision** | 被标记为机会的样本中，达到**预定义触发条件**的比例 | 触发条件必须在**机会创建时**固定并落库，事后不得修改 |
-| **Opportunity Recall** | 事后达到该条件的样本中，被提前标记为机会的比例 | 分母为「所有满足触发条件的样本」，需要全量扫描，样本量小 |
+| **Opportunity Trigger Rate** | 被标记机会中达到预定义触发条件的比例 | 只衡量条件触发，不代表机会质量 |
+| **Opportunity Precision** | 已触发机会中达到预先固定的有利路径条件、且满足不利路径约束的比例 | 成功事件、观察窗口与阈值在创建时固定；成本后价值另由经济性轨道评价 |
+| **Opportunity Recall** | 统一机会定义下满足成功事件的所有候选中，被提前标记的比例 | 必须先固定候选全集、触发和成功条件并全量扫描；候选全集未定义时为 NOT_APPLICABLE |
 | **Lead Time** | 机会创建到条件达成的时长 | 未达成者不计入 |
 | **Setup Trigger Rate** | `Trade Setup` 的 `entry_trigger` 被满足的比例 | 与 Opportunity Precision 分开统计 |
 
@@ -4798,23 +4926,23 @@ MAE% = max over t in T of  ( (P0 - min(C(t), L(t))) / P0 )   for LONG
 
 | 规则 | 说明 |
 |---|---|
-| 最低组数门槛 | 组数 < 10 时不做排名，只并列展示 |
+| 比较依据 | 组数多少不决定可否排名；依据有效样本、置信区间、配对对照与独立时间窗口验证，未经验证只并列展示 |
 | 赢家筛选 | 排名仅用于**候选筛选**，不作为结论；结论需在**独立时间窗口**上复核 |
 | 多重比较提示 | 报告中标注「已比较 N 组，取最优存在选择偏差」 |
 | 时间隔离 | 报告必须同时给出样本内/样本外两段（5.4 已要求） |
 
 ## 33.7 重叠预测窗口的去重
 
-同一资产、同一周期、同一 Agent 在相邻时点会产生**高度重叠**的预测窗口（如每小时的 `analysis_1h` 产出 1h 窗口预测，相邻两笔重叠 59 分钟）。若不处理，样本量被严重高估，置信区间虚假收窄。
+同一资产、同一周期、同一 Agent 的预测可能高度重叠，例如每小时生成一个 4h 预测，相邻窗口重叠 3h；每小时生成的固定 1h 预测通常相接，并不天然重叠。重叠与共同市场冲击均可能造成样本相关，去重不等于获得独立样本。
 
 ### 33.7.1 去重规则
 
 | 规则 | 说明 |
 |---|---|
-| **分组键** | `(symbol, timeframe, time_horizon, direction)` |
-| **判定重叠** | 同一分组键下，两笔预测的窗口重叠比例 > 50% |
-| **保留规则** | 保留**最早创建**的一笔，其余标记 `EXCLUDED_OVERLAP` 并从统计中剔除 |
-| **保留数量** | 每组保留数上限 `max_per_group`（初始 3），超过后按创建时间淘汰最早的 |
+| **分组键** | 在每个 Agent/模型/Prompt 评价组内，按 `(symbol, market_type, timeframe, time_horizon, analysis_mode)` 分组，不按预测方向拆分 |
+| **判定重叠** | 交集时长 / 较短窗口时长 > 50% |
+| **保留规则** | 按 `(published_at, signal_id)` 升序遍历；与已保留窗口满足重叠判定者标记 `EXCLUDED_OVERLAP`，其余保留；不淘汰此前保留的样本 |
+| **对照一致性** | 配对模型实验使用共同的时点/窗口选择集合，避免不同方法挑选不同样本；全部样本仍保留供审计 |
 | **记录** | 剔除决策必须记录在 `prediction_evaluations.detail.overlap_group` 与 `excluded_reason`，可审计 |
 
 ### 33.7.2 报告要求
@@ -4871,7 +4999,7 @@ MAE% = max over t in T of  ( (P0 - min(C(t), L(t))) / P0 )   for LONG
 | 超时 | 10 分钟，超时标记 `TIMEOUT`（23.1.4） |
 | 增量 | 每次只评估**新到期**的预测 + 重算口径变更影响的窗口 |
 | 幂等 | 批次幂等键 = `{scope_hash}:{window_start}:{window_end}:{evaluator_version}` |
-| 无未来数据泄漏 | 评估只能读取 `t1` 之后的数据；`evaluation_evaluations` 中任何取值的时间戳 > `window_end` 的样本必须被拒绝（自动测试覆盖） |
+| 无未来数据泄漏 | 评估在 `t1` 后运行；结果标签仅使用 `[t0,t1]` 内行情与已冻结基准，禁止窗口外极值进入指标。分析输入只使用快照截止前且当时实际可用的数据。分别测试事件时间、接收时间和窗口边界 |
 
 ---
 
@@ -5662,12 +5790,13 @@ scripts/
 | 推送 | 死信率 | < 1% | |
 | 异动 | WARN 规则日均触发数 | 5–30 条 | 超过 30 说明阈值过松，需校准 |
 | 异动 | CRITICAL 规则日均触发数 | 0–3 条 | |
-| 异动 | 规则有效率（有方向性的比例） | > 30% | 低于此值的规则应降权或关闭 |
+| 异动 | 按规则目的定义的有效性 | 分别评价方向变化、波动扩大、流动性恶化或数据故障检出 | 数据/风险规则不要求后续存在方向性；结合用户噪声反馈调节 |
 | 分析 | 全链路成功率 | > 95% | |
 | 分析 | Schema 校验失败率 | < 5% | 超过则该 Agent 的 Prompt 需调整 |
-| 评估 | Direction Accuracy | > 55%（超 50% 才有意义） | Phase 5 实测后回填真实基线 |
-| 评估 | 有效样本量 | 6 个月内 ≥ 200 条预测 | 达不到则结论不显著（33.6） |
-| 评估 | Brier Score | < 0.25 | 需覆盖足够样本 |
+| 分析内容 | 事实与引用、冲突处理、变化解释 | 通过第 4.7.3 固定场景，关键证据错误为 0 | 持续展示第 5.2.1 各维度，不能只看 schema 成功率 |
+| 评估 | 方向与三分类表现 | 在共同预测时点上与预注册规则/历史多数类基线比较 | 展示增益、覆盖率及时间分块置信区间；不以固定 55% 判定有效 |
+| 评估 | 样本积累 | 6 个月内争取 ≥ 200 条可评价前向预测 | 为积累目标；不保证统计显著，须考虑相关性与效应大小 |
+| 评估 | Brier Score | 优于预先固定的历史频率基线 | 三分类主指标、二分类辅助指标分开展示，报告 skill 与覆盖率 |
 | 调度 | 任务按时率 | > 99% | 观察 ≥3 天 |
 | 调度 | 漏跑（MISSED）数 | = 0 | 超出补跑上限也要显式记录 |
 

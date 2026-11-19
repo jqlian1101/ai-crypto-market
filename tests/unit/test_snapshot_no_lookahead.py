@@ -15,7 +15,7 @@ from aicrypto.domain.analysis.snapshot import (
     find_future_timestamps,
 )
 
-UTC = dt.timezone.utc
+UTC = dt.UTC
 AS_OF = dt.datetime(2026, 11, 12, 0, 0, tzinfo=UTC)
 
 

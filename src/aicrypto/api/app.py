@@ -22,6 +22,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from aicrypto.api.dependencies import REQUEST_ID_HEADER, TRACE_ID_HEADER, get_request_id
 from aicrypto.common.errors import AICryptoError, ErrorCode
+from aicrypto.common.responses import ErrorResponse
 from aicrypto.config.settings import Settings, get_settings
 from aicrypto.infrastructure.logging import (
     bind_context,
@@ -83,9 +84,7 @@ def _assert_no_live_trading_credentials(settings: Settings) -> None:
     if settings.FREQTRADE_ENABLED and not settings.FREQTRADE_DRY_RUN_ENFORCE:
         from aicrypto.common.errors import ConfigurationError
 
-        raise ConfigurationError(
-            "检测到可能的真实交易凭证配置且 dry-run 强制校验被关闭，拒绝启动"
-        )
+        raise ConfigurationError("检测到可能的真实交易凭证配置且 dry-run 强制校验被关闭，拒绝启动")
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
@@ -99,6 +98,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         lifespan=lifespan,
         docs_url="/docs" if str(cfg.APP_ENV) != "prod" else None,
         redoc_url=None,
+        responses={
+            status: {"model": ErrorResponse} for status in (400, 401, 403, 404, 422, 429, 500)
+        },
     )
     app.state.settings = cfg
 
@@ -117,6 +119,11 @@ def _register_middleware(app: FastAPI) -> None:
         """请求上下文：绑定 trace_id / request_id，统计耗时，回传请求 ID。"""
         request_id = _request_id_of(request)
         trace_id = request.headers.get(TRACE_ID_HEADER)
+        # 缓存到 request.state：处理器里再取 request_id / trace_id 时
+        # 必须拿到**同一个值**，否则响应头的 ID 与响应体 meta 里的 ID
+        # 会对不上（前者用透传值，后者可能重新生成随机值）。
+        request.state.request_id = request_id
+        request.state.trace_id = trace_id
         bind_context(request_id=request_id, trace_id=trace_id)
 
         started = time.perf_counter()
@@ -128,9 +135,9 @@ def _register_middleware(app: FastAPI) -> None:
             route = request.scope.get("route")
             route_path = getattr(route, "path", request.url.path)
             status = response.status_code if response is not None else 500
-            http_request_duration_ms.labels(
-                method=request.method, path=route_path
-            ).observe(elapsed_ms)
+            http_request_duration_ms.labels(method=request.method, path=route_path).observe(
+                elapsed_ms
+            )
             http_requests_total.labels(
                 method=request.method, path=route_path, status=str(status)
             ).inc()
@@ -239,9 +246,16 @@ def _register_exception_handlers(app: FastAPI) -> None:
 
 
 def _register_routers(app: FastAPI) -> None:
+    """注册路由。
+
+    - 探针端点在根路径，**不鉴权**（31.8）；
+    - 业务端点在 ``/api/v1`` 下，**需要鉴权**（34.3）。
+    """
     from aicrypto.api.routers import system
+    from aicrypto.api.routers.v1 import api_v1_router
 
     app.include_router(system.router, tags=["system"])
+    app.include_router(api_v1_router, tags=["v1"])
 
 
 __all__ = ["create_app", "lifespan"]

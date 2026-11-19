@@ -1,17 +1,5 @@
-"""行情领域包。"""
+"""纯行情领域规则；不导入 ORM 或数据库基础设施。"""
 
-from __future__ import annotations
-
-from aicrypto.domain.market.models import (
-    FundingHistory,
-    InstrumentMetadata,
-    MarketCandle,
-    MarketDataQualityEvent,
-    MarketDataSyncRun,
-    MarketTrade,
-    OpenInterestHistory,
-    OrderbookSnapshot,
-)
 from aicrypto.domain.market.quality import (
     Candle,
     DataQuality,
@@ -31,14 +19,6 @@ from aicrypto.domain.market.quality import (
 __all__ = [
     "Candle",
     "DataQuality",
-    "FundingHistory",
-    "InstrumentMetadata",
-    "MarketCandle",
-    "MarketDataQualityEvent",
-    "MarketDataSyncRun",
-    "MarketTrade",
-    "OpenInterestHistory",
-    "OrderbookSnapshot",
     "QualityEvent",
     "Severity",
     "align_to_timeframe",

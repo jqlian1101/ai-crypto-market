@@ -55,11 +55,7 @@ class TestStartupBlocking:
 
     def test_freqtrade_requires_dry_run(self) -> None:
         with pytest.raises(ValidationError, match="FREQTRADE_DRY_RUN_ENFORCE"):
-            Settings(
-                **base_kwargs(
-                    FREQTRADE_ENABLED=True, FREQTRADE_DRY_RUN_ENFORCE=False
-                )
-            )
+            Settings(**base_kwargs(FREQTRADE_ENABLED=True, FREQTRADE_DRY_RUN_ENFORCE=False))
 
     def test_freqtrade_image_tag_cannot_be_latest(self) -> None:
         with pytest.raises(ValidationError, match="FREQTRADE_IMAGE_TAG"):
@@ -110,9 +106,7 @@ class TestDerivedProperties:
         assert "1m" in [str(t) for t in settings.timeframes]
 
     def test_severity_routing_parsing(self) -> None:
-        settings = Settings(
-            **base_kwargs(NOTIFY_SEVERITY_ROUTING="CRITICAL:wecom_app,INFO:feishu")
-        )
+        settings = Settings(**base_kwargs(NOTIFY_SEVERITY_ROUTING="CRITICAL:wecom_app,INFO:feishu"))
         assert settings.severity_routing == {
             "CRITICAL": ["wecom_app"],
             "INFO": ["feishu"],

@@ -12,9 +12,9 @@ from aicrypto.config.catalog import (
 from aicrypto.config.settings import (
     AppEnv,
     DeliveryMode,
+    LLMProvider,
     LockMode,
     LogFormat,
-    LLMProvider,
     MarketType,
     QuotaCountingMode,
     Settings,

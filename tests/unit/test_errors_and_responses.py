@@ -5,11 +5,11 @@ from __future__ import annotations
 import pytest
 
 from aicrypto.common.errors import (
+    ERROR_CATALOG,
     AICryptoError,
     AuthenticationError,
-    ErrorCode,
-    ERROR_CATALOG,
     ConfigurationError,
+    ErrorCode,
 )
 from aicrypto.common.pagination import (
     build_pagination_meta,
@@ -86,7 +86,7 @@ class TestSuccessPayload:
             {"status": "ok"},
             request_id="req_1",
             trace_id="tr_1",
-            generated_at=dt.datetime(2026, 11, 12, tzinfo=dt.timezone.utc),
+            generated_at=dt.datetime(2026, 11, 12, tzinfo=dt.UTC),
         )
         assert payload["data"] == {"status": "ok"}
         assert payload["meta"]["request_id"] == "req_1"

@@ -44,6 +44,7 @@ def mask_value(value: str | None, *, keep: int = 4) -> str:
 
 def mask_url(url: str) -> str:
     """掩码 URL 中的路径段（如飞书 webhook token）。"""
+
     def _replace(match: re.Match[str]) -> str:
         scheme, host, path = match.groups()
         if not path or path == "/":
@@ -69,10 +70,21 @@ def redact(text: str) -> str:
 
 
 def mask_config_value(key: str, value: object) -> str:
-    """按配置键名判断是否敏感，返回脱敏后的展示值。"""
+    """按配置键名判断是否敏感，返回脱敏后的展示值。
+
+    分三种情形：
+
+    1. **纯机密值**（token / secret / password / api_key 等）→ ``***``。
+       这些值整体就是凭证，没有「保留部分」的意义。
+    2. **URL 型凭证**（飞书/企微 webhook 等）→ :func:`mask_url`。
+       保留 host 与路径前缀、只掩掉尾部的 token 段。
+       这样运维在日志里仍能看出「是哪个 webhook」，又不会泄漏密钥本身。
+    3. 其余 → 原样（经类型转换）。
+    """
     lowered = key.lower()
+    if isinstance(value, str) and value.startswith(("http://", "https://")):
+        # URL 型凭证优先走 URL 掩码：保留 host 便于排障
+        return mask_url(value)
     if any(s in lowered for s in _SENSITIVE_KEYS):
         return "***"
-    if isinstance(value, str) and value.startswith(("http://", "https://")):
-        return mask_url(value)
     return str(value)

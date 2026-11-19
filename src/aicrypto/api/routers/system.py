@@ -9,31 +9,38 @@
 
 from __future__ import annotations
 
-from typing import Any
+import datetime as dt
+from typing import Annotated, Any
 
-from fastapi import APIRouter, Response
+from fastapi import APIRouter, Depends, Response
 from fastapi.responses import PlainTextResponse
 
+from aicrypto.api.dependencies import RequestContext, get_request_context
+from aicrypto.api.schemas.system import HealthPayload, ReadyPayload
 from aicrypto.common.clock import now_iso
-from aicrypto.common.responses import success_payload
+from aicrypto.common.responses import SuccessResponse, success_payload
 from aicrypto.config.settings import get_settings
 from aicrypto.infrastructure.metrics import render_latest
 
 router = APIRouter()
 
 
-@router.get("/health", summary="存活探针")
-async def health() -> dict[str, Any]:
+@router.get("/health", summary="存活探针", response_model=SuccessResponse[HealthPayload])
+async def health(ctx: Annotated[RequestContext, Depends(get_request_context)]) -> dict[str, Any]:
     """存活探针：进程活着即返回 200。"""
     return success_payload(
         {"status": "ok", "timestamp": now_iso()},
-        request_id="health",
+        request_id=ctx.request_id,
+        trace_id=ctx.trace_id,
         generated_at=_utcnow(),
     )
 
 
-@router.get("/ready", summary="就绪探针")
-async def ready(response: Response) -> dict[str, Any]:
+@router.get("/ready", summary="就绪探针", response_model=SuccessResponse[ReadyPayload])
+async def ready(
+    response: Response,
+    ctx: Annotated[RequestContext, Depends(get_request_context)],
+) -> dict[str, Any]:
     """就绪探针：检查数据库与 Redis 是否可达。
 
     任一依赖不可用时返回 503（``COMMON_SERVICE_UNAVAILABLE``）。
@@ -49,7 +56,8 @@ async def ready(response: Response) -> dict[str, Any]:
 
     return success_payload(
         {"status": "ready" if ready_all else "not_ready", "checks": checks},
-        request_id="ready",
+        request_id=ctx.request_id,
+        trace_id=ctx.trace_id,
         generated_at=_utcnow(),
     )
 
@@ -70,7 +78,7 @@ async def _check_database() -> str:
         with engine.connect() as conn:
             conn.execute(text("SELECT 1"))
         return "ok"
-    except Exception:  # noqa: BLE001 - 探针不应抛出
+    except Exception:
         return "unavailable"
 
 
@@ -81,11 +89,11 @@ async def _check_redis() -> str:
         client = get_redis(get_settings())
         await client.ping()
         return "ok"
-    except Exception:  # noqa: BLE001 - 探针不应抛出
+    except Exception:
         return "unavailable"
 
 
-def _utcnow():
+def _utcnow() -> dt.datetime:
     from aicrypto.common.clock import now
 
     return now()
