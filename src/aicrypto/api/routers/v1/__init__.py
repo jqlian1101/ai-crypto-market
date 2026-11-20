@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter
 
-from aicrypto.api.routers.v1 import analysis, market, system
+from aicrypto.api.routers.v1 import analysis, market, notifications, system
 
 #: ``/api/v1`` 路由聚合器
 api_v1_router = APIRouter(prefix="/api/v1")
@@ -20,5 +20,6 @@ api_v1_router = APIRouter(prefix="/api/v1")
 api_v1_router.include_router(system.router)
 api_v1_router.include_router(market.router)
 api_v1_router.include_router(analysis.router)
+api_v1_router.include_router(notifications.router)
 
 __all__ = ["api_v1_router"]
