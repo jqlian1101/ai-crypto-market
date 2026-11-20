@@ -19,6 +19,20 @@ from aicrypto.common.errors import AICryptoError, ErrorCode
 from aicrypto.common.ids import new_snapshot_id
 from aicrypto.config.settings import Settings, get_settings
 from aicrypto.domain.analysis.report import AnalysisReportContent, AnalysisRunStatus
+from aicrypto.domain.market.indicators import (
+    FEATURE_VERSION,
+    atr,
+    bollinger,
+    ema,
+    macd,
+    rsi,
+    volume_stats,
+)
+from aicrypto.domain.market.structure import (
+    classify_regime,
+    sr_zones,
+    summarize_structure,
+)
 from aicrypto.infrastructure.database.models.analysis import MarketSnapshotRecord
 from aicrypto.infrastructure.database.models.market import MarketCandle
 from aicrypto.infrastructure.database.models.report import AnalysisRunRecord
@@ -58,6 +72,82 @@ def claim_run(settings: Settings) -> str | None:
         return run.run_id
 
 
+def rounded(value: float | None) -> float | None:
+    """指标数值统一保留 8 位小数，None 原样返回。"""
+    return None if value is None else round(value, 8)
+
+
+#: 每个周期取数窗口：至少覆盖 regime 的 EMA50 + 历史 100 根 ATR 分位，并为 MACD 预热留余量
+FRAME_LOOKBACK: dict[str, int] = {"5m": 300, "15m": 300, "1h": 300, "4h": 300}
+#: 向模型展示的最近 K 线条数（原 50，保持 token 预算）
+FRAME_DISPLAY_LIMIT = 50
+#: 技术指标与结构计算所需的最小有效根数（低于此值对应字段为 INSUFFICIENT）
+MIN_BARS_FOR_INDICATORS = 150
+
+
+def _frame_indicators(rows: list[MarketCandle]) -> dict[str, Any]:
+    """对单个周期计算 K 线指标与结构；样本不足的字段返回 None。"""
+    highs = [row.high for row in rows]
+    lows = [row.low for row in rows]
+    closes = [row.close for row in rows]
+    volumes = [row.volume for row in rows]
+    macd_value = macd(closes)
+    boll = bollinger(closes, 20, 2.0)
+    vol = volume_stats(volumes, 20)
+    structure = summarize_structure(highs, lows)
+    regime = classify_regime(highs, lows, closes)
+    zones = sr_zones(highs, lows, closes)
+    return {
+        "bars_used": len(rows),
+        "rsi_14": rounded(rsi(closes, 14)),
+        "ema_20": rounded(ema(closes, 20)),
+        "ema_50": rounded(ema(closes, 50)),
+        "ema_200": rounded(ema(closes, 200)),
+        "macd": None
+        if macd_value is None
+        else {
+            "macd": rounded(macd_value.macd),
+            "signal": rounded(macd_value.signal),
+            "histogram": rounded(macd_value.histogram),
+        },
+        "atr_14": rounded(atr(highs, lows, closes, 14)),
+        "bollinger_20_2": None
+        if boll is None
+        else {
+            "upper": rounded(boll.upper),
+            "middle": rounded(boll.middle),
+            "lower": rounded(boll.lower),
+            "bandwidth": rounded(boll.bandwidth),
+            "percent_b": rounded(boll.percent_b),
+        },
+        "volume_20": None if vol is None else {k: rounded(v) for k, v in vol.items()},
+        "market_structure": {
+            "bias": str(structure.bias),
+            "last_swing_high": rounded(structure.last_swing_high),
+            "last_swing_low": rounded(structure.last_swing_low),
+            "higher_highs": structure.higher_highs,
+            "higher_lows": structure.higher_lows,
+            "swing_count": structure.swing_count,
+        },
+        "sr_zones": [
+            {
+                "low": rounded(z.low),
+                "high": rounded(z.high),
+                "touches": z.touches,
+                "kind": z.kind,
+            }
+            for z in zones
+        ],
+        "regime": {
+            "state": str(regime.regime),
+            "ema_fast": rounded(regime.ema_fast),
+            "ema_slow": rounded(regime.ema_slow),
+            "atr_ratio": rounded(regime.atr_ratio),
+            "atr_percentile": rounded(regime.atr_percentile),
+        },
+    }
+
+
 def build_snapshot(run_id: str, settings: Settings) -> dict[str, Any]:
     cutoff = now()
     with session_scope(settings) as db:
@@ -65,6 +155,9 @@ def build_snapshot(run_id: str, settings: Settings) -> dict[str, Any]:
         if run is None or run.status != "RUNNING":
             raise AICryptoError(ErrorCode.COMMON_CONFLICT)
         frames: dict[str, Any] = {}
+        indicators: dict[str, Any] = {}
+        structure_by_frame: dict[str, Any] = {}
+        regime_by_frame: dict[str, Any] = {}
         for frame in ("5m", "15m", "1h", "4h"):
             candles = list(
                 db.scalars(
@@ -80,13 +173,27 @@ def build_snapshot(run_id: str, settings: Settings) -> dict[str, Any]:
                         MarketCandle.processed_at <= cutoff,
                     )
                     .order_by(MarketCandle.close_time.desc())
-                    .limit(50)
+                    .limit(FRAME_LOOKBACK[frame])
                 )
             )
-            frames[frame] = [candle_payload(row) for row in reversed(candles)]
+            ordered = list(reversed(candles))
+            frames[frame] = [candle_payload(row) for row in ordered[-FRAME_DISPLAY_LIMIT:]]
+            if len(ordered) >= MIN_BARS_FOR_INDICATORS:
+                computed = _frame_indicators(ordered)
+                structure_by_frame[frame] = computed.pop("market_structure")
+                regime_by_frame[frame] = computed.pop("regime")
+                indicators[frame] = computed
+            else:
+                indicators[frame] = {"bars_used": len(ordered), "status": "INSUFFICIENT"}
         if not any(frames.values()):
             raise AICryptoError(ErrorCode.ANALYSIS_SNAPSHOT_MISSING)
-        content = {"multi_timeframe_ohlcv": frames}
+        content = {
+            "multi_timeframe_ohlcv": frames,
+            "indicators": indicators,
+            "market_structure": structure_by_frame,
+            "market_regime": regime_by_frame,
+        }
+        missing = ["derivatives", "liquidity"]
         snapshot = MarketSnapshotRecord(
             snapshot_id=new_snapshot_id(now=cutoff),
             symbol=run.symbol,
@@ -95,9 +202,13 @@ def build_snapshot(run_id: str, settings: Settings) -> dict[str, Any]:
             available_as_of=cutoff,
             created_at=cutoff,
             data_quality="DEGRADED",
-            data_quality_detail={"missing": ["derivatives", "liquidity", "indicators"]},
-            feature_version="ohlcv-1",
-            schema_version="1",
+            data_quality_detail={
+                "missing": missing,
+                "reason": "衍生品与盘口数据采集线尚未接入，本快照仅含 K 线派生特征",
+                "indicator_min_bars": MIN_BARS_FOR_INDICATORS,
+            },
+            feature_version=FEATURE_VERSION,
+            schema_version="2",
             content=content,
             source_watermarks={"exchange": "binance", "received_before": cutoff.isoformat()},
         )

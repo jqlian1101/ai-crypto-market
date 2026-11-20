@@ -17,10 +17,10 @@ from alembic import context
 from sqlalchemy import engine_from_config, pool
 
 from aicrypto.config.settings import get_settings
-from aicrypto.infrastructure.database.base import Base
 
 # 导入全部模型，使 autogenerate 能看到完整元数据
 from aicrypto.infrastructure.database import models  # noqa: F401
+from aicrypto.infrastructure.database.base import Base
 
 config = context.config
 
