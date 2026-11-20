@@ -17,24 +17,28 @@ timeframes = ["5m", "15m", "1h", "4h"]
 # K 线周期对齐容差（毫秒），仅收盘 K 线才允许入库（29.5）
 close_tolerance_ms = 2000
 
-# 异动规则阈值（22.2.1 / 22.2.2）。资产差异化系数由滚动 30 日 realized vol 比值估计。
+# 异动规则阈值（22.2.1 / 22.2.2 / 22.2.3 / 22.2.4）。
+# 数值与 PRD 初始值一致；修改任一阈值必须递增 rule_version（22.2 第 3 条约束）。
+# 资产差异化系数由滚动 30 日 realized vol 比值估计。
 [anomaly.rules]
+rule_version = "v1"
+# 依赖 1m 数据的规则（PRICE_PCT_1M / PRICE_PCT_1M_CRIT / PRICE_GAP / PRICE_FLASH_MOVE）
+# 按 22.2 必须显式禁用，不得静默失效（29.2.1）。仅当 MARKET_ENABLED_INTERVALS_1M=true 时才可启用。
+disabled_rules = ["PRICE_PCT_1M", "PRICE_PCT_1M_CRIT", "PRICE_GAP", "PRICE_FLASH_MOVE"]
 
 [anomaly.rules.price_move]
-# 涨跌幅（百分比），按 timeframe 与 severity 分级
-"1m_warn_pct" = 0.5
-"1m_critical_pct" = 1.5
-"5m_warn_pct" = 1.0
-"5m_critical_pct" = 3.0
-"15m_warn_pct" = 2.0
-"15m_critical_pct" = 5.0
-"1h_warn_pct" = 3.0
-"1h_critical_pct" = 7.0
-
+# 涨跌幅（百分比），按 timeframe 与 severity 分级（22.2.1）
+"5m_warn_pct" = 0.60
+"5m_critical_pct" = 1.20
+"15m_warn_pct" = 1.20
+"15m_critical_pct" = 2.50
+"1h_warn_pct" = 2.50
+"1h_critical_pct" = 4.50
 [anomaly.rules.volatility]
-# 波动率异动：当前 ATR 占滚动均值的倍数
+# 波动率异动（22.2.2）：ATR(14) 1h ÷ ATR(14) 96h 均值
 atr_ratio_warn = 1.8
-atr_ratio_critical = 3.0
+atr_ratio_critical = 2.5
+atr_baseline_bars = 96
 # realized vol 的滚动窗口与窗口数
 realized_vol_window = "1h"
 realized_vol_lookback = 30
@@ -42,16 +46,16 @@ realized_vol_lookback = 30
 regime_flip_min_interval_seconds = 900
 
 [anomaly.rules.volume]
-# 成交量异动：当前成交量占滚动均值的倍数
-volume_ratio_warn = 2.5
-volume_ratio_critical = 5.0
+# 相对成交量（22.2.3）：当前成交量对同周期历史基线的倍数
+volume_ratio_warn = 3.0
+volume_ratio_critical = 6.0
 volume_lookback = 20
 
 [anomaly.rules.derivatives]
-# Open Interest 异动：OI 变化率（百分比）
-oi_change_warn_pct = 5.0
-oi_change_critical_pct = 12.0
-# Funding 绝对值告警阈值
+# Open Interest 异动（22.2.4）：1h OI 变化率（百分比）
+oi_change_warn_pct = 3.0
+oi_change_critical_pct = 6.0
+# 资金费率极端（22.2.4，8h 口径）
 funding_abs_warn = 0.0005
 funding_abs_critical = 0.001
 
@@ -146,7 +150,9 @@ analysis_weekly = "0 23 * * 0"
 # 评估口径（33 章）：口径版本号随算法演进递增
 [evaluation]
 metrics_version = "v1"
-min_sample_size = 20
+# 最小样本门槛按指标分别定义（33.6.1），口径以 domain/evaluation/metrics.py 为准：
+# 比率类 30；方向准确率 50；Brier/ECE 100；经济指标 100；最大回撤 50；成本比 50；分组下钻 ×2。
+# 旧版单一值 min_sample_size = 20 已废弃。
 dedup_overlap_window_hours = 4
 
 # 回测一致性（38 章）：回测与线上必须使用同一份特征实现与同一版本号
