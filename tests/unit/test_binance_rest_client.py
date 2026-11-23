@@ -49,6 +49,36 @@ def make_client(handler: Any, limiter: FakeLimiter | None = None) -> BinanceKlin
     return BinanceKlineClient(http, limiter or FakeLimiter(), max_retries=3)
 
 
+@pytest.mark.parametrize(
+    ("market_type", "path"),
+    [("SPOT", "/api/v3/time"), ("USDM_FUTURES", "/fapi/v1/time")],
+)
+async def test_fetch_server_time_uses_endpoint_per_market(market_type: str, path: str) -> None:
+    seen: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request.url.path)
+        return httpx.Response(200, json={"serverTime": 1_767_225_600_123})
+
+    limiter = FakeLimiter()
+    client = make_client(handler, limiter)
+    assert await client.fetch_server_time(market_type) == 1_767_225_600_123
+    assert seen == [path]
+    assert limiter.acquired == [(market_type, 1)]
+
+
+async def test_fetch_server_time_rejects_bad_body() -> None:
+    client = make_client(lambda r: httpx.Response(200, json={"foo": 1}))
+    with pytest.raises(ValueError):
+        await client.fetch_server_time("SPOT")
+
+
+async def test_fetch_server_time_rejects_unknown_market() -> None:
+    client = make_client(lambda r: httpx.Response(200, json={}))
+    with pytest.raises(ValueError):
+        await client.fetch_server_time("COIN_FUTURES")
+
+
 async def test_closed_end_ms_aligns_to_period_start() -> None:
     moment = dt.datetime(2026, 1, 1, 0, 7, 33, tzinfo=UTC)
     assert closed_end_ms(moment, "5m") == T0_MS + 5 * 60_000

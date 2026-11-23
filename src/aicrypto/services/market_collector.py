@@ -16,17 +16,19 @@ import asyncio
 import datetime as dt
 import json
 import time
-from collections.abc import Callable, Sequence
+from collections.abc import Awaitable, Callable, Sequence
 from contextlib import AbstractContextManager, suppress
 from dataclasses import dataclass, field
 from typing import Any
 
+import httpx
 from sqlalchemy.orm import Session
 from websockets.asyncio.client import ClientConnection, connect
 from websockets.exceptions import ConnectionClosed
 
 from aicrypto.common.clock import now as clock_now
 from aicrypto.config.settings import Settings
+from aicrypto.infrastructure import metrics
 from aicrypto.infrastructure.binance_rest import TIMEFRAME_MS
 from aicrypto.infrastructure.binance_rest_client import BinanceKlineClient, closed_end_ms
 from aicrypto.infrastructure.binance_ws import (
@@ -40,11 +42,27 @@ from aicrypto.infrastructure.binance_ws import (
 )
 from aicrypto.infrastructure.database.session import session_scope
 from aicrypto.infrastructure.logging import get_logger
+from aicrypto.infrastructure.rate_limiter import RateLimitedError
 from aicrypto.services.market_ingest import (
     IngestAction,
+    PersistOutcome,
     cache_unclosed,
     persist_closed_candle,
     route_event,
+)
+from aicrypto.services.market_monitor import (
+    INCREMENTAL_GAP_BARS,
+    LATENCY_ALERT_MS,
+    REST_FAILURE_THRESHOLD,
+    build_clock_skew_event,
+    build_gap_event,
+    build_latency_event,
+    build_rest_unavailable_event,
+    clock_offset_ms,
+    find_open_time_gaps,
+    is_clock_skewed,
+    latency_ms,
+    to_ms,
 )
 from aicrypto.services.market_recovery import (
     apply_plan,
@@ -106,6 +124,12 @@ class MarketCollector:
         self._url = build_stream_url(market_type, stream_names(self._symbols, self._timeframes))
         self._attempt = 0
         self._disconnected_at: dt.datetime | None = None
+        self._rest_failures = 0
+        self._clock_offset: int | None = None
+        #: WS 是否已完成恢复并在消费；交叉核对只在此期间运行
+        self._live = False
+        #: 恢复与交叉核对互斥，避免同一 (symbol, tf) 并发对账
+        self._reconcile_lock = asyncio.Lock()
 
     # ------------------------------------------------------------------ 生命周期
 
@@ -113,7 +137,61 @@ class MarketCollector:
         self._stop.set()
 
     async def run(self) -> None:
-        """主循环：直到 ``stop()`` 被调用才退出。"""
+        """主循环：直到 ``stop()`` 被调用才退出。
+
+        同时启动两个后台任务：时钟校准（29.8）与通路 B 交叉核对（29.4.2）。
+        """
+        background = [
+            asyncio.create_task(
+                self._periodic(
+                    self._sync_clock,
+                    self._settings.CLOCK_SYNC_INTERVAL_SECONDS,
+                    immediately=True,
+                )
+            ),
+            asyncio.create_task(
+                self._periodic(
+                    self._crosscheck,
+                    self._settings.MARKET_CROSSCHECK_SECONDS,
+                    immediately=False,
+                )
+            ),
+        ]
+        try:
+            await self._ws_loop()
+        finally:
+            for task in background:
+                task.cancel()
+            await asyncio.gather(*background, return_exceptions=True)
+
+    async def _periodic(
+        self, job: Callable[[], Awaitable[None]], interval: float, *, immediately: bool
+    ) -> None:
+        """按固定间隔执行 ``job``；单次异常只记日志，不终止循环。"""
+        if not immediately and await self._sleep_or_stop(interval):
+            return
+        while not self._stop.is_set():
+            try:
+                await job()
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                logger.error(
+                    "后台任务异常",
+                    market_type=self._market_type,
+                    job=getattr(job, "__name__", "job"),
+                    error=str(exc),
+                )
+            if await self._sleep_or_stop(interval):
+                return
+
+    async def _sleep_or_stop(self, seconds: float) -> bool:
+        """等待 ``seconds``；期间收到停止信号返回 True。"""
+        with suppress(TimeoutError):
+            await asyncio.wait_for(self._stop.wait(), timeout=seconds)
+        return self._stop.is_set()
+
+    async def _ws_loop(self) -> None:
         while not self._stop.is_set():
             try:
                 await self._run_connection()
@@ -154,21 +232,31 @@ class MarketCollector:
                 last_message_at=self._monotonic(),
             )
             logger.info("WS 已连接", market_type=self._market_type, streams=len(self._symbols))
+            metrics.market_ws_connections_total.labels(market_type=self._market_type).inc()
+            if self._disconnected_at is not None:
+                metrics.market_ws_reconnects_total.labels(market_type=self._market_type).inc()
 
             # 1-2. 先恢复：REST 对账 + 缺口补齐 + 断线事件
             await self._recover(state)
             # 3. 恢复完成后才开始消费
             self._attempt = 0
             self._disconnected_at = None
-            await self._consume(ws, state)
+            self._live = True
+            metrics.market_ws_connected.labels(market_type=self._market_type).set(1)
+            try:
+                await self._consume(ws, state)
+            finally:
+                self._live = False
+                metrics.market_ws_connected.labels(market_type=self._market_type).set(0)
 
     # ------------------------------------------------------------------ 恢复（29.3.2）
 
     async def _recover(self, state: _Session) -> None:
         disconnected_at = self._disconnected_at
-        for symbol in self._symbols:
-            for tf in self._timeframes:
-                await self._recover_pair(symbol, tf)
+        async with self._reconcile_lock:
+            for symbol in self._symbols:
+                for tf in self._timeframes:
+                    await self._recover_pair(symbol, tf)
         if disconnected_at is not None:
             await asyncio.to_thread(self._write_disconnect_event, disconnected_at)
         state.recovered = True
@@ -179,16 +267,49 @@ class MarketCollector:
         bars = recovery_window_bars(last_local_open=last_open, end_ms=end_ms, timeframe=tf)
         interval_ms = TIMEFRAME_MS[tf]
         start_ms = end_ms - bars * interval_ms
-        fetched_at = self._clock()
-        rows = await self._rest.fetch_closed_klines(
-            market_type=self._market_type,
-            symbol=symbol,
-            timeframe=tf,
-            start_ms=start_ms,
-            end_ms=end_ms,
-            fetched_at=fetched_at,
+        await self._reconcile_window(
+            symbol, tf, start_ms=start_ms, end_ms=end_ms, detected_by="REST"
         )
-        await asyncio.to_thread(self._apply_recovery, symbol, tf, start_ms, rows, fetched_at)
+
+    async def _reconcile_window(
+        self, symbol: str, tf: str, *, start_ms: int, end_ms: int, detected_by: str
+    ) -> None:
+        """REST 拉 ``[start_ms, end_ms)`` 并与本地对账。REST 失败计入连续失败次数（29.9）。"""
+        fetched_at = self._clock()
+        try:
+            rows = await self._rest.fetch_closed_klines(
+                market_type=self._market_type,
+                symbol=symbol,
+                timeframe=tf,
+                start_ms=start_ms,
+                end_ms=end_ms,
+                fetched_at=fetched_at,
+            )
+        except (httpx.HTTPError, RateLimitedError) as exc:
+            await self._on_rest_failure(exc)
+            raise
+        self._rest_failures = 0
+        await asyncio.to_thread(
+            self._apply_recovery, symbol, tf, start_ms, rows, fetched_at, detected_by
+        )
+
+    async def _on_rest_failure(self, exc: Exception) -> None:
+        self._rest_failures += 1
+        logger.warning(
+            "REST 请求失败",
+            market_type=self._market_type,
+            consecutive_failures=self._rest_failures,
+            error=str(exc),
+        )
+        # 恰好达到阈值时记一次，持续失败不刷屏；恢复成功后计数归零
+        if self._rest_failures == REST_FAILURE_THRESHOLD:
+            event = build_rest_unavailable_event(
+                market_type=self._market_type,
+                failures=self._rest_failures,
+                error=f"{type(exc).__name__}: {exc}",
+                detected_at=self._clock(),
+            )
+            await asyncio.to_thread(self._add_events, [event])
 
     def _last_open(self, symbol: str, tf: str) -> dt.datetime | None:
         with self._db() as db:
@@ -203,6 +324,7 @@ class MarketCollector:
         start_ms: int,
         rows: list[dict[str, Any]],
         fetched_at: dt.datetime,
+        detected_by: str,
     ) -> None:
         since = dt.datetime.fromtimestamp(start_ms / 1000, tz=dt.UTC)
         with self._db() as db:
@@ -217,9 +339,13 @@ class MarketCollector:
                 symbol=symbol,
                 timeframe=tf,
                 fetched=len(rows),
-                detected_by="REST",
+                detected_by=detected_by,
                 now=fetched_at,
             )
+        if result.missing:
+            metrics.market_gaps_total.labels(
+                symbol=symbol, market_type=self._market_type, timeframe=tf
+            ).inc(result.missing)
         if not plan.is_clean:
             logger.warning(
                 "恢复对账发现差异",
@@ -229,6 +355,62 @@ class MarketCollector:
                 divergent=result.divergent,
                 local_only=result.local_only,
             )
+
+    def _add_events(self, events: list[Any]) -> None:
+        with self._db() as db:
+            db.add_all(events)
+        for event in events:
+            metrics.market_data_quality_events_total.labels(
+                rule_id=event.rule_id, severity=event.severity
+            ).inc()
+
+    # ------------------------------------------------------------------ 后台：时钟（29.8）
+
+    async def _sync_clock(self) -> None:
+        sent_ms = to_ms(self._clock())
+        try:
+            server_ms = await self._rest.fetch_server_time(self._market_type)
+        except (httpx.HTTPError, RateLimitedError) as exc:
+            await self._on_rest_failure(exc)
+            raise
+        self._rest_failures = 0
+        received_ms = to_ms(self._clock())
+        offset = clock_offset_ms(server_ms, sent_ms=sent_ms, received_ms=received_ms)
+        self._clock_offset = offset
+        metrics.market_clock_offset_ms.set(offset)
+        threshold = self._settings.CLOCK_SKEW_ALERT_MS
+        if is_clock_skewed(offset, threshold_ms=threshold):
+            logger.error("本地时钟偏移超阈", market_type=self._market_type, offset_ms=offset)
+            event = build_clock_skew_event(
+                market_type=self._market_type,
+                offset_ms=offset,
+                threshold_ms=threshold,
+                detected_at=self._clock(),
+            )
+            await asyncio.to_thread(self._add_events, [event])
+        else:
+            logger.info("时钟校准完成", market_type=self._market_type, offset_ms=offset)
+
+    # ------------------------------------------------------------------ 后台：交叉核对（29.4.2）
+
+    async def _crosscheck(self) -> None:
+        """仅在 WS 已恢复并消费时运行：REST 最近 N 根与本地对账。"""
+        if not self._live:
+            return
+        for symbol in self._symbols:
+            for tf in self._timeframes:
+                if not self._live or self._stop.is_set():
+                    return
+                async with self._reconcile_lock:
+                    end_ms = closed_end_ms(self._clock(), tf)
+                    start_ms = end_ms - INCREMENTAL_GAP_BARS * TIMEFRAME_MS[tf]
+                    try:
+                        await self._reconcile_window(
+                            symbol, tf, start_ms=start_ms, end_ms=end_ms, detected_by="CROSSCHECK"
+                        )
+                    except (httpx.HTTPError, RateLimitedError):
+                        # 已在 _reconcile_window 中计数与告警；本轮跳过，下一轮再试
+                        continue
 
     def _write_disconnect_event(self, disconnected_at: dt.datetime) -> None:
         event = build_disconnect_event(
@@ -277,8 +459,79 @@ class MarketCollector:
         state.bump(outcome)
 
     def _persist(self, event: KlineEvent) -> str:
+        moment = self._clock()
+        row = event.row
         with self._db() as db:
-            return persist_closed_candle(db, event.row, now=self._clock()).value
+            outcome = persist_closed_candle(db, row, now=moment)
+            if outcome is not PersistOutcome.INSERTED:
+                return outcome.value
+            quality_events = self._post_insert_checks(db, row, moment)
+        metrics.market_candles_written_total.labels(
+            symbol=row["symbol"],
+            market_type=self._market_type,
+            timeframe=row["timeframe"],
+            source="WS",
+        ).inc()
+        for q in quality_events:
+            metrics.market_data_quality_events_total.labels(
+                rule_id=q.rule_id, severity=q.severity
+            ).inc()
+        return outcome.value
+
+    def _post_insert_checks(
+        self, db: Session, row: dict[str, Any], moment: dt.datetime
+    ) -> list[Any]:
+        """29.8 延迟 + 29.4.1 增量连续性。事件与 K 线同一事务写入。"""
+        symbol, tf, open_time = row["symbol"], row["timeframe"], row["open_time"]
+        events: list[Any] = []
+
+        latency = latency_ms(moment, row["exchange_ts"])
+        metrics.market_data_latency_ms.labels(
+            symbol=symbol, market_type=self._market_type, timeframe=tf, source="WS"
+        ).observe(latency)
+        if latency > LATENCY_ALERT_MS:
+            events.append(
+                build_latency_event(
+                    market_type=self._market_type,
+                    symbol=symbol,
+                    timeframe=tf,
+                    open_time=open_time,
+                    latency=latency,
+                    detected_at=moment,
+                )
+            )
+
+        # 只检查新写入那根与其前一根之间：更早的缺口已在当时报告，避免重复事件
+        step = TIMEFRAME_MS[tf]
+        since = open_time - dt.timedelta(milliseconds=INCREMENTAL_GAP_BARS * step)
+        prior = [
+            b.open_time
+            for b in load_local_bars(
+                db, market_type=self._market_type, symbol=symbol, timeframe=tf, since=since
+            )
+            if b.open_time < open_time
+        ]
+        gaps: list[dict[str, Any]] = []
+        if prior:
+            prev = max(prior)
+            if to_ms(open_time) - to_ms(prev) > step:
+                gaps = find_open_time_gaps([prev, open_time], tf)
+        if gaps:
+            metrics.market_gaps_total.labels(
+                symbol=symbol, market_type=self._market_type, timeframe=tf
+            ).inc(sum(int(g["missing_bars"]) for g in gaps))
+            logger.error("WS 写入后发现缺口", symbol=symbol, timeframe=tf, gaps=gaps)
+            events.append(
+                build_gap_event(
+                    market_type=self._market_type,
+                    symbol=symbol,
+                    timeframe=tf,
+                    gaps=gaps,
+                    detected_at=moment,
+                )
+            )
+        db.add_all(events)
+        return events
 
 
 __all__ = ["MarketCollector", "should_rotate"]

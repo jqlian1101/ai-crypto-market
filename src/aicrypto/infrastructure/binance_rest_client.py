@@ -23,6 +23,12 @@ from aicrypto.infrastructure.rate_limiter import (
 PAGE_LIMIT = 1000
 MAX_RATE_LIMIT_RETRIES = 5
 
+#: 服务器时间接口（29.8 时钟同步），权重 1
+SERVER_TIME_PATHS: dict[str, str] = {
+    "SPOT": "/api/v3/time",
+    "USDM_FUTURES": "/fapi/v1/time",
+}
+
 
 def closed_end_ms(now: datetime, timeframe: str) -> int:
     """当前周期起点（毫秒）。``open_time < 该值`` 的 K 线都已收盘。"""
@@ -58,6 +64,26 @@ class BinanceKlineClient:
             if not isinstance(page, list):
                 raise ValueError(f"K 线响应格式异常: {type(page).__name__}")
             return page
+        raise RateLimitedError(resp.status_code, parse_retry_after(resp.headers.get("Retry-After")))
+
+    async def fetch_server_time(self, market_type: str) -> int:
+        """返回交易所服务器时间（毫秒）。"""
+        if market_type not in ENDPOINTS:
+            raise ValueError(f"market_type 非法: {market_type!r}")
+        base_url, _ = ENDPOINTS[market_type]
+        for _ in range(self._max_retries + 1):
+            await self._limiter.acquire(market_type, 1)
+            resp = await self._client.get(f"{base_url}{SERVER_TIME_PATHS[market_type]}")
+            if resp.status_code in (429, 418):
+                self._limiter.penalize(
+                    resp.status_code, parse_retry_after(resp.headers.get("Retry-After"))
+                )
+                continue
+            resp.raise_for_status()
+            body = resp.json()
+            if not isinstance(body, dict) or "serverTime" not in body:
+                raise ValueError(f"服务器时间响应格式异常: {body!r}")
+            return int(body["serverTime"])
         raise RateLimitedError(resp.status_code, parse_retry_after(resp.headers.get("Retry-After")))
 
     async def fetch_closed_klines(
@@ -110,4 +136,4 @@ class BinanceKlineClient:
         return rows
 
 
-__all__ = ["PAGE_LIMIT", "BinanceKlineClient", "closed_end_ms"]
+__all__ = ["PAGE_LIMIT", "SERVER_TIME_PATHS", "BinanceKlineClient", "closed_end_ms"]
