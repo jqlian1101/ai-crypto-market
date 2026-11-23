@@ -30,7 +30,9 @@ from ulid import new as ulid_new
 DATED_PREFIXES = frozenset({"snap", "run", "ae"})
 
 #: 不带日期段的 ID 前缀
-PLAIN_PREFIXES = frozenset({"out", "sig", "pred", "ne", "job", "txn", "analysis", "feedback"})
+PLAIN_PREFIXES = frozenset(
+    {"out", "sig", "pred", "ne", "job", "txn", "analysis", "feedback", "dqe"}
+)
 
 _ULID_LENGTH = 10
 
