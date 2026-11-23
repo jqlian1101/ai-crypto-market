@@ -49,7 +49,11 @@ def upgrade() -> None:
         sa.Column("is_closed", sa.Boolean(), nullable=False, server_default=sa.true()),
         sa.Column("source", sa.Text(), nullable=False),
         sa.PrimaryKeyConstraint(
-            "exchange", "market_type", "symbol", "timeframe", "open_time",
+            "exchange",
+            "market_type",
+            "symbol",
+            "timeframe",
+            "open_time",
             name="pk_market_candles",
         ),
         sa.CheckConstraint(
@@ -65,18 +69,14 @@ def upgrade() -> None:
             "high >= greatest(open, close, low) AND high >= low",
             name="ck_market_candles_ohlc",
         ),
-        sa.CheckConstraint(
-            "volume >= 0 AND quote_volume >= 0", name="ck_market_candles_volume"
-        ),
+        sa.CheckConstraint("volume >= 0 AND quote_volume >= 0", name="ck_market_candles_volume"),
     )
     op.create_index(
         "idx_candles_lookup",
         "market_candles",
         ["symbol", "market_type", "timeframe", sa.text("close_time DESC")],
     )
-    op.create_index(
-        "idx_candles_processed", "market_candles", ["processed_at"]
-    )
+    op.create_index("idx_candles_processed", "market_candles", ["processed_at"])
 
     op.create_table(
         "market_trades",
@@ -118,7 +118,10 @@ def upgrade() -> None:
         sa.Column("ask_qty_sum", sa.Numeric(38, 12), nullable=False),
         sa.Column("spread_bps", sa.Numeric(12, 4), nullable=False),
         sa.PrimaryKeyConstraint(
-            "exchange", "market_type", "symbol", "captured_at",
+            "exchange",
+            "market_type",
+            "symbol",
+            "captured_at",
             name="pk_orderbook_snapshots",
         ),
     )
@@ -175,16 +178,12 @@ def upgrade() -> None:
         sa.Column("step_size", sa.Numeric(38, 12), nullable=False),
         sa.Column("min_qty", sa.Numeric(38, 12), nullable=False),
         sa.Column("min_notional", sa.Numeric(38, 12), nullable=False),
-        sa.Column(
-            "contract_multiplier", sa.Numeric(38, 12), nullable=False, server_default="1"
-        ),
+        sa.Column("contract_multiplier", sa.Numeric(38, 12), nullable=False, server_default="1"),
         sa.Column("quote_asset", sa.Text(), nullable=False),
         sa.Column("margin_asset", sa.Text(), nullable=True),
         sa.Column("onboard_date", sa.DateTime(timezone=True), nullable=True),
         sa.Column("raw", postgresql.JSONB(astext_type=sa.Text()), nullable=False),
-        sa.PrimaryKeyConstraint(
-            "exchange", "market_type", "symbol", name="pk_instrument_metadata"
-        ),
+        sa.PrimaryKeyConstraint("exchange", "market_type", "symbol", name="pk_instrument_metadata"),
     )
 
     op.create_table(
@@ -215,9 +214,7 @@ def upgrade() -> None:
             name="ck_market_data_quality_events_detected_by",
         ),
     )
-    op.create_index(
-        "idx_quality_events_detected", "market_data_quality_events", ["detected_at"]
-    )
+    op.create_index("idx_quality_events_detected", "market_data_quality_events", ["detected_at"])
     op.create_index(
         "idx_quality_events_symbol", "market_data_quality_events", ["symbol", "rule_id"]
     )
@@ -257,15 +254,11 @@ def upgrade() -> None:
         sa.Column("time_range_start", sa.DateTime(timezone=True), nullable=True),
         sa.Column("time_range_end", sa.DateTime(timezone=True), nullable=True),
         sa.Column("data_quality", sa.Text(), nullable=False),
-        sa.Column(
-            "data_quality_detail", postgresql.JSONB(astext_type=sa.Text()), nullable=False
-        ),
+        sa.Column("data_quality_detail", postgresql.JSONB(astext_type=sa.Text()), nullable=False),
         sa.Column("feature_version", sa.Text(), nullable=False),
         sa.Column("schema_version", sa.Text(), nullable=False),
         sa.Column("content", postgresql.JSONB(astext_type=sa.Text()), nullable=False),
-        sa.Column(
-            "source_watermarks", postgresql.JSONB(astext_type=sa.Text()), nullable=False
-        ),
+        sa.Column("source_watermarks", postgresql.JSONB(astext_type=sa.Text()), nullable=False),
         sa.PrimaryKeyConstraint("snapshot_id", name="pk_market_snapshots"),
     )
     op.create_index(
@@ -345,9 +338,7 @@ def upgrade() -> None:
         ),
     )
     op.create_index("idx_model_runs_agent", "model_runs", ["agent_run_id"])
-    op.create_index(
-        "idx_model_runs_model", "model_runs", ["model_id", "created_at"]
-    )
+    op.create_index("idx_model_runs_model", "model_runs", ["model_id", "created_at"])
 
     op.create_table(
         "llm_cost_records",
@@ -360,16 +351,12 @@ def upgrade() -> None:
         sa.Column("input_tokens", sa.Integer(), nullable=False),
         sa.Column("output_tokens", sa.Integer(), nullable=False),
         sa.Column("estimated_cost_usd", sa.Numeric(18, 8), nullable=False),
-        sa.Column(
-            "price_snapshot", postgresql.JSONB(astext_type=sa.Text()), nullable=False
-        ),
+        sa.Column("price_snapshot", postgresql.JSONB(astext_type=sa.Text()), nullable=False),
         sa.Column("is_degraded", sa.Boolean(), nullable=False, server_default=sa.false()),
         sa.PrimaryKeyConstraint("id", name="pk_llm_cost_records"),
     )
     op.create_index("idx_llm_cost_created", "llm_cost_records", ["created_at"])
-    op.create_index(
-        "idx_llm_cost_model", "llm_cost_records", ["model_id", "created_at"]
-    )
+    op.create_index("idx_llm_cost_model", "llm_cost_records", ["model_id", "created_at"])
 
     op.create_table(
         "prompt_versions",
@@ -459,9 +446,7 @@ def upgrade() -> None:
         sa.Column("duration_ms", sa.Integer(), nullable=True),
         sa.PrimaryKeyConstraint("id", name="pk_tool_invocations"),
     )
-    op.create_index(
-        "idx_tool_invocations_agent", "tool_invocations", ["agent_name", "invoked_at"]
-    )
+    op.create_index("idx_tool_invocations_agent", "tool_invocations", ["agent_name", "invoked_at"])
 
 
 def downgrade() -> None:

@@ -1,0 +1,109 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend:
+    name: Backend (ruff / mypy / pytest)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: aicrypto
+          POSTGRES_PASSWORD: aicrypto
+          POSTGRES_DB: aicrypto
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U aicrypto -d aicrypto"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      DATABASE_URL: postgresql+psycopg://aicrypto:aicrypto@127.0.0.1:5432/aicrypto
+      REDIS_URL: redis://127.0.0.1:6379/0
+      AUTH_ENABLED: "false"
+      ANALYSIS_TEST_DATABASE_URL: postgresql+psycopg://aicrypto:aicrypto@127.0.0.1:5432/aicrypto
+      ANOMALY_TEST_DATABASE_URL: postgresql+psycopg://aicrypto:aicrypto@127.0.0.1:5432/aicrypto
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev,postgres]"
+
+      - name: Ruff lint
+        run: ruff check .
+
+      - name: Ruff format check
+        run: ruff format --check src tests migrations scripts
+
+      - name: Mypy
+        run: mypy
+
+      - name: Config catalog check
+        run: pytest tests/unit/test_config_catalog.py -q
+
+      - name: Migrations
+        run: alembic -c migrations/alembic.ini upgrade head
+
+      - name: Pytest
+        run: pytest -q
+
+  frontend:
+    name: Frontend (typecheck / lint / test)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    defaults:
+      run:
+        working-directory: apps/web
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: apps/web/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Test
+        run: npm test

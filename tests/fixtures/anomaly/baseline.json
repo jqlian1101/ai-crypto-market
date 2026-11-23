@@ -1,0 +1,569 @@
+{
+  "schema_version": 1,
+  "rule_version": "v1",
+  "market_type": "USDM_FUTURES",
+  "fixture": "tests/fixtures/market/replay_usdm_1w",
+  "disabled_rules": [
+    "PRICE_PCT_1M",
+    "PRICE_PCT_1M_CRIT",
+    "PRICE_GAP",
+    "PRICE_FLASH_MOVE"
+  ],
+  "symbols": {
+    "BTCUSDT": {
+      "fire_counts": {
+        "PRICE_PCT_15M": 5,
+        "PRICE_PCT_1H": 1,
+        "PRICE_PCT_5M": 19,
+        "PRICE_PCT_5M_CRIT": 1,
+        "VOL_REL_VOLUME": 11
+      },
+      "suppressed": {
+        "PRICE_PCT_15M": {
+          "DEDUP_HIT": 10
+        },
+        "PRICE_PCT_1H": {
+          "DEDUP_HIT": 11
+        },
+        "PRICE_PCT_5M": {
+          "COOLDOWN": 5
+        },
+        "VOL_REL_VOLUME": {
+          "DEDUP_HIT": 121
+        }
+      },
+      "errors": 0,
+      "fires": [
+        {
+          "rule_id": "PRICE_PCT_5M",
+          "severity": "WARN",
+          "fired_at": "2026-11-13T13:34:59.999000Z"
+        },
+        {
+          "rule_id": "PRICE_PCT_5M",
+          "severity": "WARN",
+          "fired_at": "2026-11-13T15:49:59.999000Z"
+        },
+        {
+          "rule_id": "PRICE_PCT_5M",
+          "severity": "WARN",
+          "fired_at": "2026-11-14T02:29:59.999000Z"
+        },
+        {
+          "rule_id": "PRICE_PCT_15M",
+          "severity": "WARN",
+          "fired_at": "2026-11-14T02:29:59.999000Z"
+        },
+        {
+          "rule_id": "VOL_REL_VOLUME",
+          "severity": "WARN",
+          "fired_at": "2026-11-14T02:59:59.999000Z"
+        },
+        {
+          "rule_id": "PRICE_PCT_5M",
+          "severity": "WARN",
+          "fired_at": "2026-11-14T03:34:59.999000Z"
+        },
+        {
+          "rule_id": "VOL_REL_VOLUME",
+          "severity": "WARN",
+          "fired_at": "2026-11-14T14:59:59.999000Z"
+        },
+        {
+          "rule_id": "PRICE_PCT_5M",
+          "severity": "WARN",
+          "fired_at": "2026-11-14T15:44:59.999000Z"
+        },
+        {
+          "rule_id": "VOL_REL_VOLUME",
+          "severity": "WARN",
+          "fired_at": "2026-11-14T15:59:59.999000Z"
+        },
+        {
+          "rule_id": "PRICE_PCT_5M",
+          "severity": "WARN",
+          "fired_at": "2026-11-14T17:39:59.999000Z"
+        },
+        {
+          "rule_id": "PRICE_PCT_5M",
+          "severity": "WARN",
+          "fired_at": "2026-11-14T20:54:59.999000Z"
+        },
+        {
+          "rule_id": "PRICE_PCT_5M",
+          "severity": "WARN",
+          "fired_at": "2026-11-14T22:09:59.999000Z"
+        },
+        {
+          "rule_id": "PRICE_PCT_5M",
+          "severity": "WARN",
+          "fired_at": "2026-11-14T23:49:59.999000Z"
+        },
+        {
+          "rule_id": "PRICE_PCT_5M",
+          "severity": "WARN",
+          "fired_at": "2026-11-15T01:04:59.999000Z"
+        },
+        {
+          "rule_id": "VOL_REL_VOLUME",
+          "severity": "WARN",
+          "fired_at": "2026-11-15T01:59:59.999000Z"
+        },
+        {
+          "rule_id": "PRICE_PCT_5M_CRIT",
+          "severity": "CRITICAL",
+          "fired_at": "2026-11-15T02:09:59.999000Z"
+        },
+        {
+          "rule_id": "PRICE_PCT_15M",
+          "severity": "WARN",
+          "fired_at": "2026-11-15T02:14:59.999000Z"
+        },
+        {
+          "rule_id": "PRICE_PCT_5M",
+          "severity": "WARN",
+          "fired_at": "2026-11-15T02:19:59.999000Z"
+        },
+        {
+          "rule_id": "PRICE_PCT_1H",
+          "severity": "WARN",
+          "fired_at": "2026-11-15T02:59:59.999000Z"
+        },
+        {
+          "rule_id": "PRICE_PCT_5M",
+          "severity": "WARN",
+          "fired_at": "2026-11-15T08:24:59.999000Z"
+        },
+        {
+          "rule_id": "PRICE_PCT_5M",
+          "severity": "WARN",
+          "fired_at": "2026-11-15T08:59:59.999000Z"
+        },
+        {
+          "rule_id": "PRICE_PCT_5M",
+          "severity": "WARN",
+          "fired_at": "2026-11-15T14:29:59.999000Z"
+        },
+        {
+          "rule_id": "PRICE_PCT_5M",
+          "severity": "WARN",
+          "fired_at": "2026-11-16T14:14:59.999000Z"
+        },
+        {
+          "rule_id": "PRICE_PCT_15M",
+          "severity": "WARN",
+          "fired_at": "2026-11-16T14:44:59.999000Z"
+        },
+        {
+          "rule_id": "VOL_REL_VOLUME",
+          "severity": "WARN",
+          "fired_at": "2026-11-16T14:59:59.999000Z"
+        },
+        {
+          "rule_id": "PRICE_PCT_15M",
+          "severity": "WARN",
+          "fired_at": "2026-11-16T15:14:59.999000Z"
+        },
+        {
+          "rule_id": "PRICE_PCT_5M",
+          "severity": "WARN",
+          "fired_at": "2026-11-17T15:44:59.999000Z"
+        },
+        {
+          "rule_id": "PRICE_PCT_15M",
+          "severity": "WARN",
+          "fired_at": "2026-11-17T15:44:59.999000Z"
+        },
+        {
+          "rule_id": "VOL_REL_VOLUME",
+          "severity": "WARN",
+          "fired_at": "2026-11-17T15:59:59.999000Z"
+        },
+        {
+          "rule_id": "VOL_REL_VOLUME",
+          "severity": "WARN",
+          "fired_at": "2026-11-18T14:59:59.999000Z"
+        },
+        {
+          "rule_id": "VOL_REL_VOLUME",
+          "severity": "WARN",
+          "fired_at": "2026-11-18T15:59:59.999000Z"
+        },
+        {
+          "rule_id": "VOL_REL_VOLUME",
+          "severity": "WARN",
+          "fired_at": "2026-11-18T16:59:59.999000Z"
+        },
+        {
+          "rule_id": "PRICE_PCT_5M",
+          "severity": "WARN",
+          "fired_at": "2026-11-18T22:49:59.999000Z"
+        },
+        {
+          "rule_id": "VOL_REL_VOLUME",
+          "severity": "WARN",
+          "fired_at": "2026-11-19T15:59:59.999000Z"
+        },
+        {
+          "rule_id": "PRICE_PCT_5M",
+          "severity": "WARN",
+          "fired_at": "2026-11-19T17:24:59.999000Z"
+        },
+        {
+          "rule_id": "VOL_REL_VOLUME",
+          "severity": "WARN",
+          "fired_at": "2026-11-19T17:59:59.999000Z"
+        },
+        {
+          "rule_id": "PRICE_PCT_5M",
+          "severity": "WARN",
+          "fired_at": "2026-11-19T20:29:59.999000Z"
+        }
+      ],
+      "false_positive_metric": {
+        "warn_price_samples": 25,
+        "warn_price_reversed_1h": 10,
+        "rate": 0.4
+      }
+    },
+    "ETHUSDT": {
+      "fire_counts": {
+        "PRICE_PCT_15M": 11,
+        "PRICE_PCT_15M_CRIT": 1,
+        "PRICE_PCT_1H": 2,
+        "PRICE_PCT_1H_CRIT": 1,
+        "PRICE_PCT_5M": 29,
+        "PRICE_PCT_5M_CRIT": 6,
+        "VOL_REL_VOLUME": 10
+      },
+      "suppressed": {
+        "PRICE_PCT_15M": {
+          "DEDUP_HIT": 22
+        },
+        "PRICE_PCT_15M_CRIT": {
+          "DEDUP_HIT": 2
+        },
+        "PRICE_PCT_1H": {
+          "DEDUP_HIT": 22
+        },
+        "PRICE_PCT_1H_CRIT": {
+          "DEDUP_HIT": 11
+        },
+        "PRICE_PCT_5M": {
+          "COOLDOWN": 14
+        },
+        "VOL_REL_VOLUME": {
+          "DEDUP_HIT": 110
+        }
+      },
+      "errors": 0,
+      "fires": [
+        {
+          "rule_id": "PRICE_PCT_5M",
+          "severity": "WARN",
+          "fired_at": "2026-11-13T02:44:59.999000Z"
+        },
+        {
+          "rule_id": "PRICE_PCT_5M",
+          "severity": "WARN",
+          "fired_at": "2026-11-13T03:24:59.999000Z"
+        },
+        {
+          "rule_id": "PRICE_PCT_5M",
+          "severity": "WARN",
+          "fired_at": "2026-11-13T03:54:59.999000Z"
+        },
+        {
+          "rule_id": "PRICE_PCT_1H",
+          "severity": "WARN",
+          "fired_at": "2026-11-13T03:59:59.999000Z"
+        },
+        {
+          "rule_id": "PRICE_PCT_5M",
+          "severity": "WARN",
+          "fired_at": "2026-11-13T13:34:59.999000Z"
+        },
+        {
+          "rule_id": "PRICE_PCT_5M",
+          "severity": "WARN",
+          "fired_at": "2026-11-13T15:49:59.999000Z"
+        },
+        {
+          "rule_id": "PRICE_PCT_5M",
+          "severity": "WARN",
+          "fired_at": "2026-11-14T02:29:59.999000Z"
+        },
+        {
+          "rule_id": "PRICE_PCT_15M",
+          "severity": "WARN",
+          "fired_at": "2026-11-14T02:29:59.999000Z"
+        },
+        {
+          "rule_id": "VOL_REL_VOLUME",
+          "severity": "WARN",
+          "fired_at": "2026-11-14T02:59:59.999000Z"
+        },
+        {
+          "rule_id": "PRICE_PCT_5M",
+          "severity": "WARN",
+          "fired_at": "2026-11-14T03:34:59.999000Z"
+        },
+        {
+          "rule_id": "PRICE_PCT_5M",
+          "severity": "WARN",
+          "fired_at": "2026-11-14T14:04:59.999000Z"
+        },
+        {
+          "rule_id": "VOL_REL_VOLUME",
+          "severity": "WARN",
+          "fired_at": "2026-11-14T14:59:59.999000Z"
+        },
+        {
+          "rule_id": "PRICE_PCT_5M",
+          "severity": "WARN",
+          "fired_at": "2026-11-14T15:44:59.999000Z"
+        },
+        {
+          "rule_id": "VOL_REL_VOLUME",
+          "severity": "WARN",
+          "fired_at": "2026-11-14T15:59:59.999000Z"
+        },
+        {
+          "rule_id": "PRICE_PCT_5M",
+          "severity": "WARN",
+          "fired_at": "2026-11-14T17:24:59.999000Z"
+        },
+        {
+          "rule_id": "PRICE_PCT_15M",
+          "severity": "WARN",
+          "fired_at": "2026-11-14T17:29:59.999000Z"
+        },
+        {
+          "rule_id": "PRICE_PCT_5M_CRIT",
+          "severity": "CRITICAL",
+          "fired_at": "2026-11-14T20:54:59.999000Z"
+        },
+        {
+          "rule_id": "PRICE_PCT_15M",
+          "severity": "WARN",
+          "fired_at": "2026-11-14T20:59:59.999000Z"
+        },
+        {
+          "rule_id": "PRICE_PCT_1H",
+          "severity": "WARN",
+          "fired_at": "2026-11-14T20:59:59.999000Z"
+        },
+        {
+          "rule_id": "PRICE_PCT_5M",
+          "severity": "WARN",
+          "fired_at": "2026-11-14T21:14:59.999000Z"
+        },
+        {
+          "rule_id": "PRICE_PCT_5M",
+          "severity": "WARN",
+          "fired_at": "2026-11-14T21:49:59.999000Z"
+        },
+        {
+          "rule_id": "PRICE_PCT_5M",
+          "severity": "WARN",
+          "fired_at": "2026-11-14T23:44:59.999000Z"
+        },
+        {
+          "rule_id": "PRICE_PCT_5M",
+          "severity": "WARN",
+          "fired_at": "2026-11-15T01:04:59.999000Z"
+        },
+        {
+          "rule_id": "PRICE_PCT_5M",
+          "severity": "WARN",
+          "fired_at": "2026-11-15T01:49:59.999000Z"
+        },
+        {
+          "rule_id": "PRICE_PCT_5M_CRIT",
+          "severity": "CRITICAL",
+          "fired_at": "2026-11-15T02:09:59.999000Z"
+        },
+        {
+          "rule_id": "PRICE_PCT_15M_CRIT",
+          "severity": "CRITICAL",
+          "fired_at": "2026-11-15T02:14:59.999000Z"
+        },
+        {
+          "rule_id": "PRICE_PCT_5M",
+          "severity": "WARN",
+          "fired_at": "2026-11-15T02:19:59.999000Z"
+        },
+        {
+          "rule_id": "PRICE_PCT_15M",
+          "severity": "WARN",
+          "fired_at": "2026-11-15T02:29:59.999000Z"
+        },
+        {
+          "rule_id": "PRICE_PCT_1H_CRIT",
+          "severity": "CRITICAL",
+          "fired_at": "2026-11-15T02:59:59.999000Z"
+        },
+        {
+          "rule_id": "PRICE_PCT_5M",
+          "severity": "WARN",
+          "fired_at": "2026-11-15T09:04:59.999000Z"
+        },
+        {
+          "rule_id": "PRICE_PCT_15M",
+          "severity": "WARN",
+          "fired_at": "2026-11-15T09:14:59.999000Z"
+        },
+        {
+          "rule_id": "PRICE_PCT_5M",
+          "severity": "WARN",
+          "fired_at": "2026-11-15T16:29:59.999000Z"
+        },
+        {
+          "rule_id": "PRICE_PCT_5M",
+          "severity": "WARN",
+          "fired_at": "2026-11-15T23:04:59.999000Z"
+        },
+        {
+          "rule_id": "PRICE_PCT_5M_CRIT",
+          "severity": "CRITICAL",
+          "fired_at": "2026-11-16T14:14:59.999000Z"
+        },
+        {
+          "rule_id": "PRICE_PCT_5M",
+          "severity": "WARN",
+          "fired_at": "2026-11-16T14:34:59.999000Z"
+        },
+        {
+          "rule_id": "PRICE_PCT_15M",
+          "severity": "WARN",
+          "fired_at": "2026-11-16T14:44:59.999000Z"
+        },
+        {
+          "rule_id": "VOL_REL_VOLUME",
+          "severity": "WARN",
+          "fired_at": "2026-11-16T14:59:59.999000Z"
+        },
+        {
+          "rule_id": "PRICE_PCT_5M_CRIT",
+          "severity": "CRITICAL",
+          "fired_at": "2026-11-16T15:04:59.999000Z"
+        },
+        {
+          "rule_id": "PRICE_PCT_15M",
+          "severity": "WARN",
+          "fired_at": "2026-11-16T15:14:59.999000Z"
+        },
+        {
+          "rule_id": "VOL_REL_VOLUME",
+          "severity": "WARN",
+          "fired_at": "2026-11-16T15:59:59.999000Z"
+        },
+        {
+          "rule_id": "PRICE_PCT_5M",
+          "severity": "WARN",
+          "fired_at": "2026-11-17T06:34:59.999000Z"
+        },
+        {
+          "rule_id": "PRICE_PCT_5M",
+          "severity": "WARN",
+          "fired_at": "2026-11-17T15:24:59.999000Z"
+        },
+        {
+          "rule_id": "PRICE_PCT_15M",
+          "severity": "WARN",
+          "fired_at": "2026-11-17T15:44:59.999000Z"
+        },
+        {
+          "rule_id": "PRICE_PCT_5M_CRIT",
+          "severity": "CRITICAL",
+          "fired_at": "2026-11-17T15:59:59.999000Z"
+        },
+        {
+          "rule_id": "VOL_REL_VOLUME",
+          "severity": "WARN",
+          "fired_at": "2026-11-17T15:59:59.999000Z"
+        },
+        {
+          "rule_id": "PRICE_PCT_5M",
+          "severity": "WARN",
+          "fired_at": "2026-11-17T18:24:59.999000Z"
+        },
+        {
+          "rule_id": "PRICE_PCT_5M",
+          "severity": "WARN",
+          "fired_at": "2026-11-18T14:34:59.999000Z"
+        },
+        {
+          "rule_id": "PRICE_PCT_15M",
+          "severity": "WARN",
+          "fired_at": "2026-11-18T14:44:59.999000Z"
+        },
+        {
+          "rule_id": "VOL_REL_VOLUME",
+          "severity": "WARN",
+          "fired_at": "2026-11-18T14:59:59.999000Z"
+        },
+        {
+          "rule_id": "PRICE_PCT_5M",
+          "severity": "WARN",
+          "fired_at": "2026-11-18T16:19:59.999000Z"
+        },
+        {
+          "rule_id": "VOL_REL_VOLUME",
+          "severity": "WARN",
+          "fired_at": "2026-11-18T16:59:59.999000Z"
+        },
+        {
+          "rule_id": "PRICE_PCT_5M",
+          "severity": "WARN",
+          "fired_at": "2026-11-18T17:24:59.999000Z"
+        },
+        {
+          "rule_id": "PRICE_PCT_15M",
+          "severity": "WARN",
+          "fired_at": "2026-11-18T17:29:59.999000Z"
+        },
+        {
+          "rule_id": "PRICE_PCT_5M",
+          "severity": "WARN",
+          "fired_at": "2026-11-18T22:49:59.999000Z"
+        },
+        {
+          "rule_id": "PRICE_PCT_5M",
+          "severity": "WARN",
+          "fired_at": "2026-11-19T15:04:59.999000Z"
+        },
+        {
+          "rule_id": "VOL_REL_VOLUME",
+          "severity": "WARN",
+          "fired_at": "2026-11-19T15:59:59.999000Z"
+        },
+        {
+          "rule_id": "PRICE_PCT_5M_CRIT",
+          "severity": "CRITICAL",
+          "fired_at": "2026-11-19T17:24:59.999000Z"
+        },
+        {
+          "rule_id": "PRICE_PCT_15M",
+          "severity": "WARN",
+          "fired_at": "2026-11-19T17:29:59.999000Z"
+        },
+        {
+          "rule_id": "VOL_REL_VOLUME",
+          "severity": "WARN",
+          "fired_at": "2026-11-19T17:59:59.999000Z"
+        },
+        {
+          "rule_id": "PRICE_PCT_5M",
+          "severity": "WARN",
+          "fired_at": "2026-11-19T20:29:59.999000Z"
+        }
+      ],
+      "false_positive_metric": {
+        "warn_price_samples": 42,
+        "warn_price_reversed_1h": 26,
+        "rate": 0.619
+      }
+    }
+  }
+}

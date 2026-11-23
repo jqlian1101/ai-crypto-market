@@ -5,11 +5,11 @@
 ## P0：工程底座（先做）
 
 - [ ] 确认本地 `main` 领先 `origin/main` 的 5 个提交，推送到远端
-- [ ] 建立 CI（`.github/workflows/ci.yml`，当前为空），包含 pytest、ruff、mypy、前端 typecheck/lint/test（PRD 36.4）
-- [ ] 运行并修复现有测试基线（27 个测试文件）
-- [ ] 建立 `config/catalog.toml` 与 CI 校验，确认与 `Settings` 一致（PRD 32.5）
-- [ ] 补齐 `tests/fixtures/anomaly/`，生成异动规则回放基线 `baseline.json`（PRD 36.5、28.2 第 10 项）
-- [ ] 按 PRD 36.3 必测清单，逐项映射到测试用例
+- [x] 建立 CI（`.github/workflows/ci.yml`），包含 pytest、ruff、mypy、前端 typecheck/lint/test（PRD 36.4）
+- [x] 运行并修复现有测试基线（269 个后端测试 + 前端 37 个测试全部通过）
+- [x] 建立 `config/catalog.toml` 与 CI 校验，确认与 `Settings` 一致（PRD 32.5）
+- [x] 补齐 `tests/fixtures/anomaly/`，生成异动规则回放基线 `baseline.json`（PRD 36.5、28.2 第 10 项）
+- [ ] 按 PRD 36.3 必测清单，逐项映射到测试用例（已有大量单元测试，但尚未形成逐条映射表，部分不变量如补数、LLM、Freqtrade 对账仍缺测试）
 
 ## P1：行情采集层（Phase 1，M1 数据可信）
 
