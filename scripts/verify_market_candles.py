@@ -25,6 +25,7 @@ from aicrypto.config.settings import Settings, get_settings
 from aicrypto.infrastructure.binance_rest import ENDPOINTS, TIMEFRAME_MS
 from aicrypto.infrastructure.database.session import session_scope
 from aicrypto.infrastructure.logging import get_logger
+from aicrypto.infrastructure.proxy import httpx_client_kwargs
 
 logger = get_logger(__name__)
 
@@ -116,7 +117,10 @@ def check_sample(settings: Settings, sample: int) -> tuple[int, int]:
     """与 Binance 逐字段比对每组最新 sample 根。返回 (比对根数, 不一致根数)。"""
     compared = 0
     mismatches = 0
-    with session_scope(settings) as session, httpx.Client(timeout=15.0) as client:
+    with (
+        session_scope(settings) as session,
+        httpx.Client(timeout=15.0, **httpx_client_kwargs(settings.MARKET_PROXY)) as client,
+    ):
         groups = session.execute(
             text(
                 "SELECT DISTINCT market_type, symbol, timeframe FROM market_candles "

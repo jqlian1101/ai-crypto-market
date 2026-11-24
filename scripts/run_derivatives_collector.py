@@ -31,6 +31,7 @@ from aicrypto.infrastructure.binance_derivatives import BASE_URLS
 from aicrypto.infrastructure.binance_derivatives_client import BinanceDerivativesClient
 from aicrypto.infrastructure.cache import close_redis
 from aicrypto.infrastructure.logging import get_logger
+from aicrypto.infrastructure.proxy import httpx_client_kwargs
 from aicrypto.infrastructure.rate_limiter import RateLimiter
 from aicrypto.services.derivatives_collector import DerivativesCollector
 
@@ -47,7 +48,9 @@ async def run(settings: Settings, market_types: list[str]) -> None:
     symbols = resolve_market_symbols(settings)
     limiter = RateLimiter()
     stop = asyncio.Event()
-    async with httpx.AsyncClient(timeout=15.0) as http:
+    async with httpx.AsyncClient(
+        timeout=15.0, **httpx_client_kwargs(settings.MARKET_PROXY)
+    ) as http:
         rest = BinanceDerivativesClient(http, limiter)
         collectors = [
             DerivativesCollector(

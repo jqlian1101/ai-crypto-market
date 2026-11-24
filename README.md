@@ -187,6 +187,24 @@ npm run dev
 
 探针端点 `/health`、`/ready`、`/metrics` **不鉴权**。
 
+### 5. 币安访问代理（可选）
+
+如果本机需要通过代理访问币安，在 `.env` 里设置：
+
+```bash
+MARKET_PROXY=http://127.0.0.1:7892   # 留空 = 直连
+```
+
+- **REST 与 WS 共用**这一个地址，均走 HTTP CONNECT 隧道；
+- **仅支持 `http` / `https`**：`socks5://` 会被拒绝（websockets 走 SOCKS 需要
+  `python-socks`、httpx 走 SOCKS 需要 `socksio`，都不在依赖清单里）；
+- 配置了代理后，REST 会关闭 `trust_env`——**不再读系统代理**，
+  避免 `NO_PROXY` 之类的规则把币安请求绕开代理；
+- 未配置代理时，WS 会显式禁用代理自动探测（`websockets` 默认会去读系统代理，
+  在 macOS 上会把 SOCKS 代理解析成 `socks5h://` 而直接 `ImportError`）。
+
+> 常见做法是让 Clash / Mihomo 等客户端的规则把 `binance.com` 指向直连或合适的节点。
+
 ---
 
 ## 日常命令

@@ -33,6 +33,7 @@ from aicrypto.infrastructure.binance_rest import (
 from aicrypto.infrastructure.database.models.market import MarketCandle
 from aicrypto.infrastructure.database.session import session_scope
 from aicrypto.infrastructure.logging import get_logger
+from aicrypto.infrastructure.proxy import httpx_client_kwargs
 
 logger = get_logger(__name__)
 
@@ -131,7 +132,7 @@ def run(args: argparse.Namespace, settings: Settings) -> int:
     failures = 0
     total = 0
 
-    with httpx.Client(timeout=15.0) as client:
+    with httpx.Client(timeout=15.0, **httpx_client_kwargs(settings.MARKET_PROXY)) as client:
         for mt in market_types:
             for symbol in symbols:
                 for tf in timeframes:

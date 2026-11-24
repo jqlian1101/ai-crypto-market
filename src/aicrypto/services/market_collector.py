@@ -42,6 +42,7 @@ from aicrypto.infrastructure.binance_ws import (
 )
 from aicrypto.infrastructure.database.session import session_scope
 from aicrypto.infrastructure.logging import get_logger
+from aicrypto.infrastructure.proxy import websockets_proxy
 from aicrypto.infrastructure.rate_limiter import RateLimitedError
 from aicrypto.services.market_ingest import (
     IngestAction,
@@ -222,6 +223,7 @@ class MarketCollector:
     async def _run_connection(self) -> None:
         async with connect(
             self._url,
+            proxy=websockets_proxy(self._settings.MARKET_PROXY),
             open_timeout=10,
             ping_interval=20,
             ping_timeout=20,

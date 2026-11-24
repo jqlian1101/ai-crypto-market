@@ -12,6 +12,7 @@ from aicrypto.config.settings import get_settings
 from aicrypto.infrastructure.database.models.market import MarketCandle
 from aicrypto.infrastructure.database.models.report import AnalysisRunRecord
 from aicrypto.infrastructure.database.session import session_scope
+from aicrypto.infrastructure.proxy import httpx_client_kwargs
 from aicrypto.services.analysis import create_run, get_report, get_run
 from aicrypto.services.analysis_worker import process_one
 
@@ -26,7 +27,11 @@ def main() -> None:
         )
         if pending:
             raise RuntimeError("已有排队或运行任务，请先处理后再执行联调脚本")
-    with httpx.Client(base_url="https://data-api.binance.vision", timeout=30) as client:
+    with httpx.Client(
+        base_url="https://data-api.binance.vision",
+        timeout=30,
+        **httpx_client_kwargs(settings.MARKET_PROXY),
+    ) as client:
         for frame in ("5m", "15m", "1h", "4h"):
             response = client.get(
                 "/api/v3/klines",

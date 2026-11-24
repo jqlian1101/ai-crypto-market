@@ -158,6 +158,9 @@ class Settings(BaseSettings):
     MARKET_TRADE_RETENTION_DAYS: int = Field(default=90, ge=1)
     CLOCK_SYNC_INTERVAL_SECONDS: int = Field(default=600, ge=60)
     CLOCK_SKEW_ALERT_MS: int = Field(default=5000, ge=0)
+    # 币安访问代理，形如 http://127.0.0.1:7892；留空表示直连。
+    # REST 与 WS 共用此地址；仅支持 http/https（走 CONNECT 隧道）。
+    MARKET_PROXY: str = Field(default="", description="币安 API 代理地址；留空直连")
 
     # ---------------- 异动与规则 (22) ----------------
     ANOMALY_SCAN_INTERVAL_SECONDS: int = Field(default=60, ge=5)
@@ -276,6 +279,22 @@ class Settings(BaseSettings):
     def _check_sampling_rate(cls, value: float) -> float:
         if not 0.0 <= value <= 1.0:
             raise ValueError("LOG_SAMPLING_RATE 必须在 0.0 与 1.0 之间")
+        return value
+
+    @field_validator("MARKET_PROXY")
+    @classmethod
+    def _check_market_proxy(cls, value: str) -> str:
+        """校验代理地址格式（留空表示直连）。
+
+        格式校验放在 Settings 层，与其它配置项一致：非法值必须**在启动时**
+        暴露，而不是等到第一次请求才失败（PRD 32.3）。
+        """
+        from aicrypto.infrastructure.proxy import normalize_proxy_url
+
+        try:
+            normalize_proxy_url(value)
+        except ValueError as exc:
+            raise ValueError(str(exc)) from exc
         return value
 
     @field_validator("NOTIFY_QUIET_HOURS")

@@ -4524,6 +4524,7 @@ config/
 | `MARKET_TRADE_RETENTION_DAYS` | `90` | 聚合成交保留天数（27.3） |
 | `CLOCK_SYNC_INTERVAL_SECONDS` | `600` | 时钟校准（29.8） |
 | `CLOCK_SKEW_ALERT_MS` | `5000` | 偏移告警阈值 |
+| `MARKET_PROXY` | — | 币安访问代理，形如 `http://127.0.0.1:7892`；留空直连。REST 与 WS 共用，仅支持 http/https |
 
 ### 异动与规则（第 22 章）
 

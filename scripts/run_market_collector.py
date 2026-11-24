@@ -25,6 +25,7 @@ from aicrypto.infrastructure.binance_rest import ENDPOINTS
 from aicrypto.infrastructure.binance_rest_client import BinanceKlineClient
 from aicrypto.infrastructure.cache import close_redis
 from aicrypto.infrastructure.logging import get_logger
+from aicrypto.infrastructure.proxy import httpx_client_kwargs
 from aicrypto.infrastructure.rate_limiter import RateLimiter
 from aicrypto.services.market_collector import MarketCollector
 
@@ -42,7 +43,9 @@ async def run(settings: Settings, market_types: list[str]) -> None:
     timeframes = [str(tf) for tf in settings.timeframes]
     limiter = RateLimiter()
     stop = asyncio.Event()
-    async with httpx.AsyncClient(timeout=15.0) as http:
+    async with httpx.AsyncClient(
+        timeout=15.0, **httpx_client_kwargs(settings.MARKET_PROXY)
+    ) as http:
         rest = BinanceKlineClient(http, limiter)
         collectors = [
             MarketCollector(
