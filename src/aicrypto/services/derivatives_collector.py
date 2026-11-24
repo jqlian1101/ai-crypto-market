@@ -74,6 +74,10 @@ from aicrypto.services.derivatives_ingest import (
     persist_orderbook,
     persist_trade,
 )
+from aicrypto.services.funding_current import (
+    FundingCurrentSnapshot,
+    write_funding_current,
+)
 
 logger = get_logger(__name__)
 
@@ -549,8 +553,36 @@ class DerivativesCollector:
             metrics.market_derivatives_mark_price.labels(
                 symbol=mark.symbol, market_type=self._market_type
             ).set(float(mark.mark_price))
+            # 写入 Redis 供异动引擎消费（L-05）。
+            # 采集器与异动扫描器是两个独立进程，内存态无法共享。
+            await self._publish_funding_current(mark)
 
     # ------------------------------------------------------------------ 写入
+
+    async def _publish_funding_current(self, mark: Any) -> None:
+        """把当前预估资金费率写入 Redis，供异动引擎消费（L-05）。
+
+        **失败不影响 WS 主循环**：Redis 只是共享通道，写不进去只是
+        异动引擎少一个触发源，不能因此中断行情采集。异常只记日志。
+        """
+        try:
+            snapshot = FundingCurrentSnapshot(
+                market_type=mark.market_type,
+                symbol=mark.symbol,
+                funding_rate=mark.funding_rate,
+                mark_price=mark.mark_price,
+                index_price=mark.index_price,
+                next_funding_time=mark.next_funding_time,
+                exchange_ts=mark.exchange_ts,
+                received_at=mark.received_at,
+            )
+            await write_funding_current(snapshot)
+        except (httpx.HTTPError, ValueError, TypeError, OSError) as exc:
+            logger.warning(
+                "当前资金费率写入共享缓存失败",
+                market_type=self._market_type,
+                error=f"{type(exc).__name__}: {exc}",
+            )
 
     def _write_oi(self, row: dict[str, Any]) -> None:
         with self._db() as db:

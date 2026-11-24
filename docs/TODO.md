@@ -73,8 +73,12 @@
 - [ ] 核对 PRD 22.2 约 40 条规则，补齐 MVP 要求的价格、成交量、衍生品核心规则
 - [ ] 衍生品类规则接入 P2 数据后启用（阈值已在 `config/base.toml` 的
       `[anomaly.rules.derivatives]` 备好，但当前无代码读取，见 L-07）
-- [ ] `DER_FUNDING_EXTREME` 用 WS `markPrice` 预估费率做低延迟触发源（L-05）；
-      注意只写 `anomaly_events`，**不回写** `funding_history`（已结算事实不可改写）
+- [x] `DER_FUNDING_EXTREME` 的 WS 预估费率通道（L-05）：
+      新增 `services/funding_current.py`，采集器把 `markPrice` 的当前预估费率
+      写入 Redis（键 `market:funding_current:{market_type}:{symbol}`，
+      TTL 360s > 陈旧阈值 120s），异动引擎可读取。
+      **不写 `funding_history`**——已结算事实不可改写；
+      键缺失 = 数据缺失（标记 skipped），不得当作费率为 0
 - [ ] `DER_LS_SKEW` / `DER_PRICE_OI_DIVERGENCE` 的规则实现（L-07）：
       输入已就绪（L-06 已接入真实价格变化率与 OI 变化率），
       但异动引擎尚无 `DER_*` 规则族
