@@ -31,6 +31,7 @@ from aicrypto.domain.market.derivatives import (
     long_short_skew,
     oi_change_pct,
     oi_trend,
+    price_oi_divergence,
     spread_bps,
     taker_volume_split,
 )
@@ -42,6 +43,7 @@ from aicrypto.services.derivatives_ingest import (
     load_open_interest,
     load_recent_trades,
 )
+from aicrypto.services.market import price_change_pct
 
 #: OI 变化率窗口（22.2.4：1h）
 OI_CHANGE_WINDOW_SECONDS = 3600
@@ -49,6 +51,9 @@ OI_CHANGE_WINDOW_SECONDS = 3600
 BOOK_STALE_SECONDS = 180.0
 #: 成交统计回看窗口（秒）
 TRADE_WINDOW_SECONDS = 3600
+#: 价格变化率所用的 K 线周期。价格与 OI 必须同窗口可比，
+#: 因此用 1h——与 OI 的 1h 变化窗口对齐（22.2.4）。
+PRICE_CHANGE_TIMEFRAME = "1h"
 
 
 def _missing(reason: str) -> dict[str, Any]:
@@ -151,14 +156,34 @@ def build_derivatives(
     funding_block = result["funding"]
     oi_change = oi_block.get("change_1h_pct") if isinstance(oi_block, dict) else None
     funding_rate = funding_block.get("current_rate") if isinstance(funding_block, dict) else None
+
+    # 价格变化率：与 OI 用**同一市场**、**同一窗口**（1h），
+    # 否则「价格/OI 背离」是在比较两个不同量纲的区间。
+    # 用期货侧 K 线（OI 也来自期货侧），保证同源可比。
+    price_change = price_change_pct(
+        db,
+        symbol=symbol,
+        market_type=market_type,
+        timeframe=PRICE_CHANGE_TIMEFRAME,
+        window_seconds=OI_CHANGE_WINDOW_SECONDS,
+        as_of=now,
+    )
     result["price_oi_divergence"] = {
-        "status": "ok" if oi_change is not None else "missing_data",
-        "detected": False,
+        "status": "ok" if oi_change is not None and price_change is not None else "missing_data",
+        # 真正的领域层计算，而不是手写字面量 False
+        "detected": price_oi_divergence(price_change, oi_change),
         "long_short_skew": long_short_skew(
             oi_change=oi_change,
             funding_rate=funding_rate,
-            price_change_pct=None,
+            price_change_pct=price_change,
         ),
+        # 判定依据一并给出，便于排障与复盘
+        "price_change_pct": price_change,
+        "oi_change_pct": oi_change,
+        "price_window": {
+            "timeframe": PRICE_CHANGE_TIMEFRAME,
+            "seconds": OI_CHANGE_WINDOW_SECONDS,
+        },
     }
     return result
 
@@ -323,6 +348,7 @@ def build_derivatives_snapshot(
 __all__ = [
     "BOOK_STALE_SECONDS",
     "OI_CHANGE_WINDOW_SECONDS",
+    "PRICE_CHANGE_TIMEFRAME",
     "TRADE_WINDOW_SECONDS",
     "build_basis",
     "build_derivatives",

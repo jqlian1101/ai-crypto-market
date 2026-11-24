@@ -57,9 +57,10 @@
 - [ ] **数据保留与清理**（L-03、L-04）：`MARKET_TRADE_RETENTION_DAYS`、
       `RETENTION_ENABLED` 均只声明未消费；`market_trades` / `orderbook_snapshots`
       无限增长，与 PRD 27.3 冲突
-- [ ] **接入真实价格变化率**（L-06）：`long_short_skew()` 的 `price_change_pct`
-      恒传 `None`，`price_oi_divergence()` 无调用点，导致多空偏向与价格/OI 背离
-      永远无法产出（静默失效）
+- [x] **接入真实价格变化率**（L-06）：新增 `market.price_change_pct()`，
+      快照的 `detected` 改用领域层 `price_oi_divergence()` 真实计算，
+      `long_short_skew()` 不再恒传 `None`。
+      价格与 OI 同源（期货侧）同窗口（1h），按根数取 K 线避免边界丢数
 - [ ] **futures WS 实盘验证**（L-08）：本机 `fstream.binance.com` 连得上但收不到消息，
       `markPrice` 流与 futures `aggTrade` 落库路径未跑通；需换网络环境补验
 - [ ] 第二数据源交叉校验：OI / Funding / 盘口目前只有 Binance 单源（PRD 28.2 第 8 项）
@@ -74,7 +75,9 @@
       `[anomaly.rules.derivatives]` 备好，但当前无代码读取，见 L-07）
 - [ ] `DER_FUNDING_EXTREME` 用 WS `markPrice` 预估费率做低延迟触发源（L-05）；
       注意只写 `anomaly_events`，**不回写** `funding_history`（已结算事实不可改写）
-- [ ] `DER_LS_SKEW` / `DER_PRICE_OI_DIVERGENCE` 需先补真实价格变化率输入（L-06）
+- [ ] `DER_LS_SKEW` / `DER_PRICE_OI_DIVERGENCE` 的规则实现（L-07）：
+      输入已就绪（L-06 已接入真实价格变化率与 OI 变化率），
+      但异动引擎尚无 `DER_*` 规则族
 - [ ] 显式禁用依赖 1m 的规则，并在配置中留痕
 - [ ] 异动阈值用 2–4 周历史数据回放校准（PRD 28.2 第 4 项）
 - [ ] 每条规则的历史触发频率与后续方向性统计（PRD 28.2 第 5 项）
