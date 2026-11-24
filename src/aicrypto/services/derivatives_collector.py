@@ -42,8 +42,12 @@ from aicrypto.infrastructure.binance_derivatives import (
     parse_open_interest,
     parse_open_interest_history,
     parse_premium_index,
+    supports,
 )
-from aicrypto.infrastructure.binance_derivatives_client import BinanceDerivativesClient
+from aicrypto.infrastructure.binance_derivatives_client import (
+    BinanceDerivativesClient,
+    UnsupportedMarketError,
+)
 from aicrypto.infrastructure.binance_derivatives_ws import (
     agg_trade_stream_names,
     build_stream_url,
@@ -111,10 +115,16 @@ class DerivativesCollector:
         self._stop = stop_event or asyncio.Event()
         self._attempt = 0
         self._rest_failures = 0
-        self._url = build_stream_url(
-            market_type,
-            agg_trade_stream_names(self._symbols) + mark_price_stream_names(self._symbols),
-        )
+        # 按市场能力分流（29.2）：现货没有 OI / Funding / markPrice，
+        # 对其发起衍生品请求会被 Binance 拒绝（403），进而被误判成
+        # 「REST 连续失败」而写出虚假的 CRITICAL DATA_STALE 事件。
+        self._has_oi = supports(market_type, "open_interest")
+        self._has_funding = supports(market_type, "funding")
+        self._has_mark_price = supports(market_type, "mark_price")
+        streams = agg_trade_stream_names(self._symbols)
+        if self._has_mark_price:
+            streams += mark_price_stream_names(self._symbols)
+        self._url = build_stream_url(market_type, streams)
         self._mark_prices: dict[str, Any] = {}
 
     # ------------------------------------------------------------------ 生命周期
@@ -146,17 +156,21 @@ class DerivativesCollector:
         """轮询线：OI / Funding / 盘口 / 合约规格。
 
         每个数据源有自己的节奏，但共用一条循环，避免一堆定时器互相干扰。
+
+        **按市场能力分流**（29.2）：现货不支持 OI / Funding / OI 历史，
+        这些任务**根本不排期**——不是跑起来再跳过，而是从一开始就不发起，
+        避免 Binance 403 被误判成数据质量故障。
         """
         oi_interval = self._settings.MARKET_OI_POLL_SECONDS
         book_interval = self._settings.MARKET_BOOK_SNAPSHOT_INTERVAL_SECONDS
         funding_interval = self._settings.MARKET_FUNDING_POLL_SECONDS
 
-        next_oi = 0.0
+        next_oi = 0.0 if self._has_oi else float("inf")
         next_book = 0.0
-        next_funding = 0.0
+        next_funding = 0.0 if self._has_funding else float("inf")
         next_metadata = 0.0
         # OI 历史只在启动时拉一次：用来回填 1h 变化率窗口的起点
-        next_oi_history = 0.0
+        next_oi_history = 0.0 if self._has_oi else float("inf")
 
         while not self._stop.is_set():
             now = self._monotonic()
@@ -185,6 +199,14 @@ class DerivativesCollector:
             await job
         except asyncio.CancelledError:
             raise
+        except UnsupportedMarketError as exc:
+            # 该市场不支持此能力——是**调用方的逻辑问题**，不是数据质量问题。
+            # 绝不能累加 _rest_failures，否则会写出虚假的 CRITICAL DATA_STALE。
+            logger.debug(
+                "跳过该市场不支持的能力",
+                market_type=self._market_type,
+                capability=exc.capability,
+            )
         except (httpx.HTTPError, RateLimitedError, ValueError) as exc:
             self._rest_failures += 1
             logger.warning(
@@ -210,7 +232,12 @@ class DerivativesCollector:
 
         顺带做通路 C 的陈旧判定（29.4.3）：OI 是轮询数据，没有 WS 可对照，
         用「业务时间（响应里的 time）vs 拉取时间」判断是否已陈旧。
+
+        持仓量是**衍生品专属**数据（29.2）：现货市场没有持仓量。
         """
+        if not self._has_oi:
+            logger.debug("跳过持仓量轮询：该市场不支持", market_type=self._market_type)
+            return
         for symbol in self._symbols:
             fetched_at = self._clock()
             body = await self._rest.fetch_open_interest(
@@ -257,6 +284,8 @@ class DerivativesCollector:
         OI 当前值只能从轮询拿到，进程刚启动时本地没有历史，
         ``DER_OI_SURGE`` 的 1h 变化率无法计算；历史接口一次性补齐这段窗口。
         """
+        if not self._has_oi:
+            return
         body = await self._rest.fetch_open_interest_history(
             market_type=self._market_type, symbol=symbol, period="5m"
         )
@@ -267,7 +296,13 @@ class DerivativesCollector:
         ).inc(len(rows))
 
     async def _poll_funding(self) -> None:
-        """轮询资金费率历史，并记录当前预估费率。"""
+        """轮询资金费率历史，并记录当前预估费率。
+
+        资金费率是**衍生品专属**数据（29.2）：现货市场没有该概念。
+        """
+        if not self._has_funding:
+            logger.debug("跳过资金费率轮询：该市场不支持", market_type=self._market_type)
+            return
         for symbol in self._symbols:
             body = await self._rest.fetch_funding_rate(market_type=self._market_type, symbol=symbol)
             for item in body:

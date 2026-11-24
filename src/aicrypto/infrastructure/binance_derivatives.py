@@ -74,6 +74,33 @@ LOW_WEIGHT_ENDPOINTS = frozenset(
     }
 )
 
+#: 各市场**支持**的能力集合。
+#:
+#: OI / Funding / premiumIndex / markPrice 都是**衍生品专属**（29.2）：
+#: Binance 的现货市场没有持仓量、没有资金费率、没有标记价格流。
+#: 现货只需要盘口深度与聚合成交——前者是基差计算的现货侧输入（29.6），
+#: 后者是流动性分析的成交侧输入。
+#:
+#: **这不是优化，是正确性问题**：若对现货发起衍生品请求，Binance 会返回 403，
+#: 采集器会把它当成「REST 连续失败」而写出 CRITICAL 级别的 ``DATA_STALE``
+#: 质量事件——那是虚假告警，会淹没真实的数据质量信号。
+MARKET_CAPABILITIES: dict[str, frozenset[str]] = {
+    "SPOT": frozenset({"depth", "trades"}),
+    "USDM_FUTURES": frozenset({"depth", "trades", "open_interest", "funding", "mark_price"}),
+}
+
+
+def supports(market_type: str, capability: str) -> bool:
+    """该市场是否支持某项能力。
+
+    ``capability`` 取值：``depth`` / ``trades`` / ``open_interest`` /
+    ``funding`` / ``mark_price``。
+    """
+    caps = MARKET_CAPABILITIES.get(market_type)
+    if caps is None:
+        raise ValueError(f"market_type 非法: {market_type!r}")
+    return capability in caps
+
 
 def endpoint_weight(endpoint: str, *, market_type: str, limit: int | None = None) -> int:
     """按接口名返回权重，供统一限流器扣减（27.2）。"""
@@ -327,6 +354,7 @@ __all__ = [
     "FUTURES_DEPTH_PATH",
     "FUTURES_EXCHANGE_INFO_PATH",
     "LOW_WEIGHT_ENDPOINTS",
+    "MARKET_CAPABILITIES",
     "OI_HISTORY_PAGE_LIMIT",
     "OI_HISTORY_PATH",
     "OI_PATH",
@@ -345,4 +373,5 @@ __all__ = [
     "parse_open_interest_history",
     "parse_premium_index",
     "spread_bps",
+    "supports",
 ]

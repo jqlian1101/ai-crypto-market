@@ -31,12 +31,28 @@ from aicrypto.infrastructure.binance_derivatives import (
     SPOT_DEPTH_PATH,
     SPOT_EXCHANGE_INFO_PATH,
     endpoint_weight,
+    supports,
 )
 from aicrypto.infrastructure.rate_limiter import (
     RateLimitedError,
     RateLimiter,
     parse_retry_after,
 )
+
+
+class UnsupportedMarketError(ValueError):
+    """该市场不支持请求的能力。
+
+    例如对现货市场请求持仓量 / 资金费率——这些是衍生品专属数据。
+    与「请求失败」区分开：这个错误是**调用方的逻辑问题**，
+    不是网络或交易所故障，不应触发 ``DATA_STALE`` 质量事件。
+    """
+
+    def __init__(self, market_type: str, capability: str) -> None:
+        super().__init__(f"市场 {market_type} 不支持能力 {capability}")
+        self.market_type = market_type
+        self.capability = capability
+
 
 MAX_RATE_LIMIT_RETRIES = 5
 
@@ -78,14 +94,36 @@ class BinanceDerivativesClient:
             return resp.json()
         raise RateLimitedError(resp.status_code, parse_retry_after(resp.headers.get("Retry-After")))
 
+    async def _get_supported(
+        self,
+        market_type: str,
+        path: str,
+        *,
+        endpoint: str,
+        capability: str,
+        params: dict[str, Any] | None = None,
+        limit: int | None = None,
+    ) -> Any:
+        """发请求前先确认该市场支持此能力。
+
+        衍生品端点（OI / Funding / premiumIndex）在现货市场不存在，
+        Binance 会返回 **403**。若放任请求发出，采集层会把它当成
+        「REST 连续失败」而写出 CRITICAL 级别的 ``DATA_STALE`` 事件——
+        那是虚假告警，会淹没真实的数据质量信号。
+        """
+        if not supports(market_type, capability):
+            raise UnsupportedMarketError(market_type, capability)
+        return await self._get(market_type, path, endpoint=endpoint, params=params, limit=limit)
+
     # ------------------------------------------------------------------ OI
 
     async def fetch_open_interest(self, *, market_type: str, symbol: str) -> dict[str, Any]:
         """当前持仓量。"""
-        body = await self._get(
+        body = await self._get_supported(
             market_type,
             OI_PATH,
             endpoint="open_interest",
+            capability="open_interest",
             params={"symbol": symbol.upper()},
         )
         if not isinstance(body, dict):
@@ -112,10 +150,11 @@ class BinanceDerivativesClient:
             params["startTime"] = start_ms
         if end_ms is not None:
             params["endTime"] = end_ms
-        body = await self._get(
+        body = await self._get_supported(
             market_type,
             OI_HISTORY_PATH,
             endpoint="open_interest_history",
+            capability="open_interest",
             params=params,
         )
         if not isinstance(body, list):
@@ -139,10 +178,11 @@ class BinanceDerivativesClient:
             params["startTime"] = start_ms
         if end_ms is not None:
             params["endTime"] = end_ms
-        body = await self._get(
+        body = await self._get_supported(
             market_type,
             FUNDING_RATE_PATH,
             endpoint="funding_rate",
+            capability="funding",
             params=params,
         )
         if not isinstance(body, list):
@@ -157,10 +197,11 @@ class BinanceDerivativesClient:
         不传 ``symbol`` 时返回全部合约（响应是数组）。
         """
         params = {"symbol": symbol.upper()} if symbol else None
-        body = await self._get(
+        body = await self._get_supported(
             market_type,
             PREMIUM_INDEX_PATH,
             endpoint="premium_index",
+            capability="mark_price",
             params=params,
         )
         if isinstance(body, list):
@@ -211,4 +252,8 @@ def stale_seconds(business_ts: dt.datetime, *, fetched_at: dt.datetime) -> float
     return max(0.0, (fetched_at - business_ts).total_seconds())
 
 
-__all__ = ["BinanceDerivativesClient", "stale_seconds"]
+__all__ = [
+    "BinanceDerivativesClient",
+    "UnsupportedMarketError",
+    "stale_seconds",
+]
