@@ -21,9 +21,10 @@ from __future__ import annotations
 import datetime as dt
 import hashlib
 import json
+import types
 from enum import StrEnum
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Literal, Union, get_args, get_origin
 
 from pydantic import Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -87,6 +88,21 @@ class LockMode(StrEnum):
 class LLMProvider(StrEnum):
     CLOUD = "cloud"
     LOCAL = "local"
+
+
+def _is_optional(annotation: Any) -> bool:
+    """判断字段注解是否**可空**（``X | None``）。
+
+    只认真正的 ``Optional``：注解里含 ``NoneType`` 联合成员即视为可空。
+    用于把「未配置」与「配置了但非法」区分开——
+    可空字段留空 = 未配置；必填字段留空 = 配置缺失，必须报错。
+    """
+    if annotation is None:
+        return False
+    origin = get_origin(annotation)
+    if origin is Union or origin is types.UnionType:
+        return type(None) in get_args(annotation)
+    return False
 
 
 class Settings(BaseSettings):
@@ -230,6 +246,31 @@ class Settings(BaseSettings):
     RETENTION_ENABLED: bool = Field(default=True)
 
     # ---------------- 校验器 ----------------
+    @model_validator(mode="before")
+    @classmethod
+    def _blank_optional_to_none(cls, data: Any) -> Any:
+        """把**可选字段**的空字符串归一化为 ``None``。
+
+        ``.env.example`` 按 PRD 32.2 的约定对未配置项**留空**（而不是注释掉）。
+        但 ``bool`` / ``int`` / ``float`` 类型的可选字段拿到 ``""`` 会直接解析失败
+        （``Input should be a valid boolean``），导致按模板复制出的 ``.env``
+        **无法启动进程**。
+
+        这里只对**可空（Optional）**字段做归一化：留空即「未配置」。
+        必填字段留空仍然报错——那是真正的配置缺失，必须显式暴露。
+        """
+        if not isinstance(data, dict):
+            return data
+        optional_fields = {
+            name for name, field in cls.model_fields.items() if _is_optional(field.annotation)
+        }
+        cleaned = dict(data)
+        for name in optional_fields:
+            value = cleaned.get(name)
+            if isinstance(value, str) and not value.strip():
+                cleaned[name] = None
+        return cleaned
+
     @field_validator("LOG_SAMPLING_RATE")
     @classmethod
     def _check_sampling_rate(cls, value: float) -> float:

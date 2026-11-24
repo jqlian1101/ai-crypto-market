@@ -91,48 +91,86 @@
 > pip 需走镜像（本仓库已配置 `mirrors.aliyun.com`），容器镜像已使用
 > `docker.m.daocloud.io` 前缀。恢复官方源时删除对应前缀即可。
 
+### macOS 本机环境（Apple Silicon）
+
+已验证的本地组合：
+
+| 项 | 版本 | 说明 |
+|---|---|---|
+| macOS | 26.6.2 (arm64) | Apple M4 / 10 核 / 16 GB |
+| Python | 3.12.11 | 由 `uv` 提供，见下方命令 |
+| Node.js | 24.12.0 | npm 走 `registry.npmmirror.com` |
+| Docker | 29.3.1 + Compose v5.1.1 | 容器走 `docker.m.daocloud.io` |
+
+> **端口约定**：本机 Homebrew 已运行 `postgresql@18`（5432）与 `redis`（6379），
+> 且 PG 上承载其它项目的库，**不可停**。因此 `docker compose` 的宿主端口
+> 改为 **15432 / 16379**（容器内仍是 5432 / 6379），与 CI 的 5432 / 6379 不同。
+>
+> **已知网络限制**：`fapi.binance.com` 与 `fstream.binance.com` 在本机超时，
+> `api.binance.com` 返回 403。即 **futures WS 与现货 REST 无法在本机端到端验证**
+> （见 `docs/遗留问题.md` L-08 / L-09），需换网络环境补验。
+
+创建 Python 环境（`uv` 可离线复用已缓存的 3.12 解释器）：
+
+```bash
+# uv 装在 conda env 里；也可自行安装
+export PATH="/opt/anaconda3/envs/agent/bin:$PATH"
+
+uv venv --python 3.12 .venv
+uv pip install --python .venv/bin/python -e ".[dev]" \
+  --index-url https://pypi.tuna.tsinghua.edu.cn/simple
+```
+
 ---
 
 ## 快速启动
 
 ### 1. 基础设施（PostgreSQL + Redis）
 
-```powershell
+```bash
 docker compose up -d
 docker compose ps          # 等待两个服务都是 healthy
 ```
 
+容器端口：PostgreSQL `127.0.0.1:15432`、Redis `127.0.0.1:16379`。
+
 ### 2. 后端
 
-```powershell
+```bash
 # 首次：创建虚拟环境并安装依赖
-python -m venv .venv
-.\.venv\Scripts\python.exe -m pip install -e ".[dev]"
+uv venv --python 3.12 .venv
+uv pip install --python .venv/bin/python -e ".[dev]" \
+  --index-url https://pypi.tuna.tsinghua.edu.cn/simple
 
 # 准备环境变量（首次）
-copy .env.example .env
+cp .env.example .env
 # 然后编辑 .env，至少填好 DATABASE_URL / REDIS_URL / AUTH_TOKEN
 
 # 建表
-.\.venv\Scripts\python.exe -m alembic -c migrations\alembic.ini upgrade head
+.venv/bin/python -m alembic -c migrations/alembic.ini upgrade head
 
 # 启动
-.\.venv\Scripts\python.exe -m uvicorn aicrypto.api.app:create_app --factory --reload --port 8000
+.venv/bin/python -m uvicorn aicrypto.api.app:create_app --factory --reload --port 8000
 ```
+
+> **``.env.example`` 可直接复制使用**：模板中未配置项按 PRD 32.2 留空，
+> Settings 会把**可空字段**的空串归一化为 `None`（留空 = 未配置）；
+> 必填字段留空仍然**阻止进程启动**（32.3）。
+> 生成令牌：`.venv/bin/python -c "import secrets; print(secrets.token_urlsafe(32))"`
 
 校验后端已就绪：
 
-```powershell
+```bash
 curl http://127.0.0.1:8000/health
 curl http://127.0.0.1:8000/ready    # 会检查 DB 与 Redis
 ```
 
 ### 3. 前端
 
-```powershell
-cd apps\web
+```bash
+cd apps/web
 npm install
-copy .env.example .env.local   # API_PROXY_TARGET 默认即 http://127.0.0.1:8000
+cp .env.example .env.local   # API_PROXY_TARGET 默认即 http://127.0.0.1:8000
 npm run dev
 ```
 
@@ -153,32 +191,40 @@ npm run dev
 
 ## 日常命令
 
+> 下表用 `python` 代表 venv 解释器。macOS/Linux 写 `.venv/bin/python`，
+> Windows 写 `.\.venv\Scripts\python.exe`。也可以先 `source .venv/bin/activate`。
+
 ### 后端
 
 | 目的 | 命令 |
 |---|---|
-| 启动（开发热重载） | `.\.venv\Scripts\python.exe -m uvicorn aicrypto.api.app:create_app --factory --reload --port 8000` |
-| 单元测试 | `.\.venv\Scripts\python.exe -m pytest tests/unit -q` |
-| 契约测试 | `.\.venv\Scripts\python.exe -m pytest tests/contract -q` |
-| 全部测试 | `.\.venv\Scripts\python.exe -m pytest -q` |
-| 覆盖率 | `.\.venv\Scripts\python.exe -m pytest --cov --cov-report=term-missing` |
-| Lint | `.\.venv\Scripts\python.exe -m ruff check src tests` |
-| 格式化 | `.\.venv\Scripts\python.exe -m ruff format src tests` |
-| 类型检查 | `.\.venv\Scripts\python.exe -m mypy` |
-| 数据库迁移 | `.\.venv\Scripts\python.exe -m alembic -c migrations\alembic.ini upgrade head` |
-| 迁移回退一版 | `.\.venv\Scripts\python.exe -m alembic -c migrations\alembic.ini downgrade -1` |
-| 生成新迁移 | `.\.venv\Scripts\python.exe -m alembic -c migrations\alembic.ini revision --autogenerate -m "描述"` |
+| 启动（开发热重载） | `python -m uvicorn aicrypto.api.app:create_app --factory --reload --port 8000` |
+| 单元测试 | `python -m pytest tests/unit -q` |
+| 契约测试 | `python -m pytest tests/contract -q` |
+| 全部测试 | `python -m pytest -q` |
+| 覆盖率 | `python -m pytest --cov --cov-report=term-missing` |
+| Lint | `python -m ruff check src tests` |
+| 格式化 | `python -m ruff format src tests` |
+| 类型检查 | `python -m mypy` |
+| 数据库迁移 | `python -m alembic -c migrations/alembic.ini upgrade head` |
+| 迁移回退一版 | `python -m alembic -c migrations/alembic.ini downgrade -1` |
+| 生成新迁移 | `python -m alembic -c migrations/alembic.ini revision --autogenerate -m "描述"` |
+
+> **集成测试需要数据库**：跑全量测试前设置
+> `ANALYSIS_TEST_DATABASE_URL` 与 `ANOMALY_TEST_DATABASE_URL`
+> 两个环境变量指向测试库（见 `docs/遗留问题.md` L-14 关于
+> `127.0.0.1` 与 `localhost` 的连接耗时差异）。
 
 ### 采集进程
 
 | 目的 | 命令 |
 |---|---|
-| 启动 K 线采集 | `.\.venv\Scripts\python.exe scripts\run_market_collector.py` |
-| 启动衍生品与盘口采集 | `.\.venv\Scripts\python.exe scripts\run_derivatives_collector.py` |
-| 只采永续 | `... scripts\run_market_collector.py --market-types USDM_FUTURES` |
-| 行情补数 | `.\.venv\Scripts\python.exe scripts\backfill_market.py` |
-| K 线校验 | `.\.venv\Scripts\python.exe scripts\verify_market_candles.py` |
-| 异动规则回放 | `.\.venv\Scripts\python.exe scripts\replay_anomaly.py` |
+| 启动 K 线采集 | `python scripts/run_market_collector.py` |
+| 启动衍生品与盘口采集 | `python scripts/run_derivatives_collector.py` |
+| 只采永续 | `python scripts/run_market_collector.py --market-types USDM_FUTURES` |
+| 行情补数 | `python scripts/backfill_market.py` |
+| K 线校验 | `python scripts/verify_market_candles.py` |
+| 异动规则回放 | `python scripts/replay_anomaly.py` |
 
 ### 前端
 
@@ -245,9 +291,9 @@ AICryptoMarket/
 
 后端响应模型位于 `src/aicrypto/api/schemas/`，是 OpenAPI 的真源。后端 API 契约变更后，在仓库根目录执行：
 
-```powershell
-.\.venv\Scripts\python.exe scripts\export_openapi.py
-cd apps\web
+```bash
+python scripts/export_openapi.py
+cd apps/web
 npm run generate:api
 ```
 
@@ -336,8 +382,11 @@ npm run generate:api
 |---|---|
 | 启动报 `DATABASE_URL 缺失` | `.env` 未创建或未填该项。这是**设计行为**：校验失败必须阻止启动 |
 | 启动报 `AUTH_TOKEN ... 必须配置` | `AUTH_ENABLED=true` 时必须给令牌；本地自用可临时设 `AUTH_ENABLED=false` |
+| 启动报 `Input should be a valid boolean` | 可选字段在 `.env` 里留空即可；若是**必填**字段留空才是配置缺失 |
 | `/ready` 返回 503 | `docker compose ps` 看容器是否 healthy；确认 `.env` 里的端口与容器映射一致 |
 | `alembic upgrade` 连不上库 | 用 `postgresql+psycopg://`（psycopg3），不是 `postgresql://`（psycopg2） |
+| 端口 5432/6379 被占用 | 本机 Homebrew 的 PG/Redis 已在跑；`docker compose` 用的是 **15432 / 16379** |
+| `alembic upgrade` 报 `Operation not permitted` | 沙箱拦截了 TCP 连接；用有网络权限的方式执行 |
 | 前端报「后端服务不可用」 | 后端未启动，或 `apps/web/.env.local` 的 `API_PROXY_TARGET` 不对 |
 | 前端 401 | 令牌未保存，去 `/auth/verify` 页粘贴 `.env` 里的 `AUTH_TOKEN` |
 | pip 安装超时 | 走镜像：`pip install -i https://mirrors.aliyun.com/pypi/simple/` |

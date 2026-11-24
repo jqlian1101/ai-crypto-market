@@ -26,7 +26,9 @@ services:
       TZ: UTC
       PGTZ: UTC
     ports:
-      - "127.0.0.1:5432:5432"
+      # 本机 Homebrew 的 postgresql@18 占用 5432（承载其它项目的库，不能停），
+      # 因此容器改用 15432。恢复标准端口时删掉前段宿主端口即可。
+      - "127.0.0.1:15432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
@@ -49,7 +51,8 @@ services:
       - "60"
       - "1"
     ports:
-      - "127.0.0.1:6379:6379"
+      # 同上：本机 Homebrew redis 占用 6379，容器改用 16379
+      - "127.0.0.1:16379:6379"
     volumes:
       - redis_data:/data
     healthcheck:
