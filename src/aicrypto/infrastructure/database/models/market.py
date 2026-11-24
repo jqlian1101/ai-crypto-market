@@ -11,6 +11,7 @@ from sqlalchemy.orm import Mapped, mapped_column
 
 from aicrypto.infrastructure.database.base import (
     Base,
+    BpsType,
     PriceType,
     QuantityType,
     RateType,
@@ -102,7 +103,7 @@ class OrderbookSnapshot(Base):
     best_ask: Mapped[Decimal] = mapped_column(PriceType, nullable=False)
     bid_qty_sum: Mapped[Decimal] = mapped_column(QuantityType, nullable=False)
     ask_qty_sum: Mapped[Decimal] = mapped_column(QuantityType, nullable=False)
-    spread_bps: Mapped[Decimal] = mapped_column(nullable=False)
+    spread_bps: Mapped[Decimal] = mapped_column(BpsType, nullable=False)
     __table_args__ = (
         pk("pk_orderbook_snapshots", "exchange", "market_type", "symbol", "captured_at"),
         desc_idx("idx_books_symbol", "symbol", "market_type", "captured_at"),

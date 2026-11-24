@@ -72,6 +72,58 @@ market_binance_rate_limit_hits_total = Counter(
 )
 
 # --------------------------------------------------------------------------
+# 衍生品与盘口（P2）
+# --------------------------------------------------------------------------
+market_derivatives_oi_written_total = Counter(
+    "market_derivatives_oi_written_total",
+    "写入的持仓量采样数",
+    labelnames=("symbol", "market_type"),
+    registry=REGISTRY,
+)
+market_derivatives_funding_written_total = Counter(
+    "market_derivatives_funding_written_total",
+    "写入的资金费率记录数",
+    labelnames=("symbol", "market_type"),
+    registry=REGISTRY,
+)
+market_derivatives_book_written_total = Counter(
+    "market_derivatives_book_written_total",
+    "写入的盘口快照数（只存 top20）",
+    labelnames=("symbol", "market_type"),
+    registry=REGISTRY,
+)
+market_derivatives_trade_events_total = Counter(
+    "market_derivatives_trade_events_total",
+    "接收到的聚合成交事件数（含重复）",
+    labelnames=("symbol", "market_type"),
+    registry=REGISTRY,
+)
+market_derivatives_trades_total = Counter(
+    "market_derivatives_trades_total",
+    "实际落库的聚合成交数（已去重）",
+    labelnames=("symbol", "market_type"),
+    registry=REGISTRY,
+)
+market_derivatives_stale_seconds = Gauge(
+    "market_derivatives_stale_seconds",
+    "轮询型衍生品数据的陈旧秒数（29.4.3 通路 C）",
+    labelnames=("symbol", "market_type", "dataset"),
+    registry=REGISTRY,
+)
+market_derivatives_funding_current_rate = Gauge(
+    "market_derivatives_funding_current_rate",
+    "markPrice 流推送的当前预估资金费率（低延迟触发源，29.2）",
+    labelnames=("symbol", "market_type"),
+    registry=REGISTRY,
+)
+market_derivatives_mark_price = Gauge(
+    "market_derivatives_mark_price",
+    "markPrice 流推送的标记价格",
+    labelnames=("symbol", "market_type"),
+    registry=REGISTRY,
+)
+
+# --------------------------------------------------------------------------
 # 特征与异动
 # --------------------------------------------------------------------------
 feature_compute_duration_ms = Histogram(

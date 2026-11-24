@@ -138,6 +138,8 @@ class Settings(BaseSettings):
     MARKET_BACKFILL_MAX_KLINES: int = Field(default=1000, ge=1, le=1000)
     MARKET_BOOK_SNAPSHOT_INTERVAL_SECONDS: int = Field(default=60, ge=1)
     MARKET_BOOK_DEPTH_LEVELS: int = Field(default=20, ge=1, le=100)
+    MARKET_FUNDING_POLL_SECONDS: int = Field(default=600, ge=60)
+    MARKET_TRADE_RETENTION_DAYS: int = Field(default=90, ge=1)
     CLOCK_SYNC_INTERVAL_SECONDS: int = Field(default=600, ge=60)
     CLOCK_SKEW_ALERT_MS: int = Field(default=5000, ge=0)
 

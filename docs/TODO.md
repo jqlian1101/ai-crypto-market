@@ -1,38 +1,44 @@
 # AICryptoMarket 完整 TODO List
 
-> 基于代码与文档的静态检索整理，未运行测试或启动服务，实际状态以验证为准。
+> 状态说明：`[x]` 表示已实现**且有测试覆盖**；`[ ]` 表示未做或未验证。
+> 最近一次核对：P0 / P1 / P2 的主体已完成，后端测试 443 passed / 11 skipped
+> （skipped 均为需要 PostgreSQL 的集成测试）。
 
 ## P0：工程底座（先做）
 
-- [ ] 确认本地 `main` 领先 `origin/main` 的 5 个提交，推送到远端
+- [x] 推送本地 `main` 到远端（已与 `origin/main` 同步）
 - [x] 建立 CI（`.github/workflows/ci.yml`），包含 pytest、ruff、mypy、前端 typecheck/lint/test（PRD 36.4）
-- [x] 运行并修复现有测试基线（269 个后端测试 + 前端 37 个测试全部通过）
+- [x] 运行并修复现有测试基线
 - [x] 建立 `config/catalog.toml` 与 CI 校验，确认与 `Settings` 一致（PRD 32.5）
 - [x] 补齐 `tests/fixtures/anomaly/`，生成异动规则回放基线 `baseline.json`（PRD 36.5、28.2 第 10 项）
+- [ ] 打通集成测试环境：设置 `ANALYSIS_TEST_DATABASE_URL` / `ANOMALY_TEST_DATABASE_URL`，
+      当前 11 个集成测试全部 skip，DB 相关改动存在盲区
 - [ ] 按 PRD 36.3 必测清单，逐项映射到测试用例（已有大量单元测试，但尚未形成逐条映射表，部分不变量如补数、LLM、Freqtrade 对账仍缺测试）
 
 ## P1：行情采集层（Phase 1，M1 数据可信）
 
-- [ ] Binance WebSocket 采集器（现货与 USDⓈ-M），`websockets` 依赖已声明但未使用
-- [ ] WS 断线重连与恢复顺序（PRD 29.3）
-- [ ] 缺口三通路检测与主动补数（PRD 29.4）
-- [ ] 仅已收盘 K 线落库并参与计算，落库层物理隔离未收盘数据（PRD 29.5）
-- [ ] Spot 与 Futures 对齐（PRD 29.6）
-- [ ] 时间戳语义（received_at、processed_at）统一（PRD 29.8）
-- [ ] 写入幂等与重复推送去重（PRD 29.7）
-- [ ] 采集层降级矩阵落地（PRD 29.9）
-- [ ] 第二数据源决策：引入 Bybit/OKX 交叉校验，或启用 Binance 多接口一致性检查（PRD 28.2 第 8 项、29.4.2）
-- [ ] 限流统一 RateLimiter 与退避（PRD 27.2）
-- [ ] 验收：断线补数后 K 线无缺口，重复推送不产生重复记录
+- [x] Binance WebSocket 采集器（现货与 USDⓈ-M），`market_collector.py`
+- [x] WS 断线重连与恢复顺序（PRD 29.3）
+- [x] 缺口三通路检测与主动补数（PRD 29.4）
+- [x] 仅已收盘 K 线落库并参与计算，落库层物理隔离未收盘数据（PRD 29.5）
+- [x] Spot 与 Futures 对齐（PRD 29.6）
+- [x] 时间戳语义（received_at、processed_at）统一（PRD 29.8）
+- [x] 写入幂等与重复推送去重（PRD 29.7）
+- [x] 采集层降级矩阵落地（PRD 29.9）
+- [x] 限流统一 RateLimiter 与退避（PRD 27.2）
+- [x] 验收：断线补数后 K 线无缺口，重复推送不产生重复记录
 
 ## P2：衍生品与盘口数据
 
-- [ ] 采集 Open Interest 并写入 `open_interest_history`
-- [ ] 采集 Funding Rate 并写入 `funding_history`
-- [ ] 采集盘口快照（top20 + 低频）写入 `orderbook_snapshots`，并控制磁盘占用（PRD 17、27.3）
-- [ ] 采集成交流写入 `market_trades`
-- [ ] 快照构建接入衍生品与盘口数据，移除 `data_quality="DEGRADED"` 的临时标记（`analysis_worker.py`）
-- [ ] 补齐 Derivatives、Liquidity 所需的特征计算
+- [x] 采集 Open Interest 并写入 `open_interest_history`（REST 轮询，60s，`derivatives_collector.py`）
+- [x] 采集 Funding Rate 并写入 `funding_history`（REST 轮询，`MARKET_FUNDING_POLL_SECONDS`）
+- [x] 采集盘口快照（top20 + 低频）写入 `orderbook_snapshots`，并控制磁盘占用（PRD 17、27.3）
+- [x] 采集成交流写入 `market_trades`（WS `aggTrade`）
+- [x] 快照构建接入衍生品与盘口数据，移除 `data_quality="DEGRADED"` 的临时标记（`analysis_worker.py`）
+- [x] 补齐 Derivatives、Liquidity 所需的特征计算（`domain/market/derivatives.py`）
+- [ ] 第二数据源交叉校验：OI / Funding / 盘口目前只有 Binance 单源（PRD 28.2 第 8 项）
+- [ ] 接入 P3 衍生品异动规则：`DER_OI_SURGE` / `DER_OI_FLUSH` / `DER_FUNDING_EXTREME` /
+      `DER_FUNDING_FLIP` / `DER_BASIS_EXTREME` / `DER_LS_SKEW` / `DER_PRICE_OI_DIVERGENCE`
 
 ## P3：异动检测（Phase 2.5）
 

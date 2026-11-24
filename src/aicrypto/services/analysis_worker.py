@@ -39,6 +39,7 @@ from aicrypto.infrastructure.database.models.report import AnalysisRunRecord
 from aicrypto.infrastructure.database.session import session_scope
 from aicrypto.infrastructure.logging import configure_logging, get_logger
 from aicrypto.services.analysis import create_report
+from aicrypto.services.derivatives_snapshot import build_derivatives_snapshot
 from aicrypto.services.market import candle_payload
 
 logger = get_logger(__name__)
@@ -83,6 +84,22 @@ FRAME_LOOKBACK: dict[str, int] = {"5m": 300, "15m": 300, "1h": 300, "4h": 300}
 FRAME_DISPLAY_LIMIT = 50
 #: 技术指标与结构计算所需的最小有效根数（低于此值对应字段为 INSUFFICIENT）
 MIN_BARS_FOR_INDICATORS = 150
+
+
+def _block_has_data(block: dict[str, Any]) -> bool:
+    """判断一个特征块是否含真实数据。
+
+    ``status == "missing_data"`` 的块不算有数据。嵌套块（如 ``derivatives``
+    下的 ``open_interest``）只要有任一子块为 ``ok`` 即视为有数据。
+    """
+    if block.get("status") != "ok":
+        nested = [
+            value
+            for key, value in block.items()
+            if key != "status" and isinstance(value, dict)
+        ]
+        return any(item.get("status") == "ok" for item in nested)
+    return True
 
 
 def _frame_indicators(rows: list[MarketCandle]) -> dict[str, Any]:
@@ -193,7 +210,24 @@ def build_snapshot(run_id: str, settings: Settings) -> dict[str, Any]:
             "market_structure": structure_by_frame,
             "market_regime": regime_by_frame,
         }
-        missing = ["derivatives", "liquidity"]
+        # 衍生品与流动性：数据缺失时标记 missing_data，不得用 0 替代（29.6）
+        derivatives_block = build_derivatives_snapshot(
+            db,
+            market_type=run.market_type,
+            symbol=run.symbol,
+            now=cutoff,
+        )
+        content.update(derivatives_block)
+        missing = [
+            name
+            for name, block in (
+                ("derivatives", derivatives_block["derivatives"]),
+                ("liquidity", derivatives_block["liquidity"]),
+                ("basis", derivatives_block["basis"]),
+            )
+            if not _block_has_data(block)
+        ]
+        data_quality = "GOOD" if not missing else "DEGRADED"
         snapshot = MarketSnapshotRecord(
             snapshot_id=new_snapshot_id(now=cutoff),
             symbol=run.symbol,
@@ -201,10 +235,14 @@ def build_snapshot(run_id: str, settings: Settings) -> dict[str, Any]:
             as_of=cutoff,
             available_as_of=cutoff,
             created_at=cutoff,
-            data_quality="DEGRADED",
+            data_quality=data_quality,
             data_quality_detail={
                 "missing": missing,
-                "reason": "衍生品与盘口数据采集线尚未接入，本快照仅含 K 线派生特征",
+                "reason": (
+                    "衍生品与盘口数据齐全"
+                    if not missing
+                    else "部分衍生品/盘口数据缺失或陈旧，已按 missing_data 标记"
+                ),
                 "indicator_min_bars": MIN_BARS_FOR_INDICATORS,
             },
             feature_version=FEATURE_VERSION,

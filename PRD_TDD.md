@@ -4520,6 +4520,8 @@ config/
 | `MARKET_BACKFILL_MAX_KLINES` | `1000` | 单页上限（27.2） |
 | `MARKET_BOOK_SNAPSHOT_INTERVAL_SECONDS` | `60` | 盘口快照频率 |
 | `MARKET_BOOK_DEPTH_LEVELS` | `20` | 只存 top20 |
+| `MARKET_FUNDING_POLL_SECONDS` | `600` | 资金费率历史轮询间隔 |
+| `MARKET_TRADE_RETENTION_DAYS` | `90` | 聚合成交保留天数（27.3） |
 | `CLOCK_SYNC_INTERVAL_SECONDS` | `600` | 时钟校准（29.8） |
 | `CLOCK_SKEW_ALERT_MS` | `5000` | 偏移告警阈值 |
 

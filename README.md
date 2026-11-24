@@ -3,9 +3,20 @@
 个人自用的加密市场智能与分析平台。后端 FastAPI + PostgreSQL + Redis，前端 Next.js Dashboard。
 完整需求与验收标准见 [`PRD_TDD.md`](PRD_TDD.md)。
 
-当前状态：**Phase 0 底座已就绪** —— 配置体系、领域模型、错误码字典、指标埋点、
-统一响应契约、数据库迁移与前端 Dashboard 框架均可运行。业务功能（行情采集、
-AI 分析、异动推送、评估追踪）按 PRD 第 20 章的 MVP 定义分阶段落地。
+当前状态：**Phase 0 底座 + Phase 1 行情采集 + Phase 2 衍生品采集已就绪** ——
+配置体系、领域模型、错误码字典、指标埋点、统一响应契约、数据库迁移、
+前端 Dashboard 框架，以及 K 线 / 持仓量 / 资金费率 / 盘口 / 聚合成交的采集链路
+均可运行。AI 分析、异动推送、评估追踪按 PRD 第 20 章的 MVP 定义分阶段落地。
+
+> **采集进程**（两个，需分别启动）：
+>
+> | 进程 | 采集内容 | 表 |
+> |---|---|---|
+> | `scripts/run_market_collector.py` | K 线（WS）+ REST 对账补数 | `market_candles` |
+> | `scripts/run_derivatives_collector.py` | 持仓量 / 资金费率 / 盘口（REST 轮询）+ 聚合成交 / 标记价格（WS） | `open_interest_history`、`funding_history`、`orderbook_snapshots`、`market_trades` |
+>
+> 持仓量没有 WebSocket 推送，只能 REST 轮询，因此**衍生品异动的检出延迟高于价格异动**
+> （PRD 29.2 / 29.4.3）。
 
 ---
 
@@ -148,6 +159,17 @@ npm run dev
 | 数据库迁移 | `.\.venv\Scripts\python.exe -m alembic -c migrations\alembic.ini upgrade head` |
 | 迁移回退一版 | `.\.venv\Scripts\python.exe -m alembic -c migrations\alembic.ini downgrade -1` |
 | 生成新迁移 | `.\.venv\Scripts\python.exe -m alembic -c migrations\alembic.ini revision --autogenerate -m "描述"` |
+
+### 采集进程
+
+| 目的 | 命令 |
+|---|---|
+| 启动 K 线采集 | `.\.venv\Scripts\python.exe scripts\run_market_collector.py` |
+| 启动衍生品与盘口采集 | `.\.venv\Scripts\python.exe scripts\run_derivatives_collector.py` |
+| 只采永续 | `... scripts\run_market_collector.py --market-types USDM_FUTURES` |
+| 行情补数 | `.\.venv\Scripts\python.exe scripts\backfill_market.py` |
+| K 线校验 | `.\.venv\Scripts\python.exe scripts\verify_market_candles.py` |
+| 异动规则回放 | `.\.venv\Scripts\python.exe scripts\replay_anomaly.py` |
 
 ### 前端
 
