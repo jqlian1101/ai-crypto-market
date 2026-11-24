@@ -16,10 +16,9 @@
 - [x] 补齐 `tests/fixtures/anomaly/`，生成异动规则回放基线 `baseline.json`（PRD 36.5、28.2 第 10 项）
 - [x] 打通集成测试环境：本地已用 `docker compose` 启动 Postgres/Redis，
       设置 `ANALYSIS_TEST_DATABASE_URL` / `ANOMALY_TEST_DATABASE_URL` 后 11 个集成测试全部执行
-- [ ] **推送本地提交触发 CI**（L-10）：本地领先 `origin/main` 2 个提交（P2 + 验证修复），
-      CI 从未运行过 P2 代码。CI 配置本身完备（已含 Postgres/Redis service container
-      与两个测试库环境变量），**不是配置缺失，是没推上去**。
-      注意 CI 还跑 `ruff format --check`，本次仅跑了 `ruff check`
+- [x] **推送本地提交触发 CI**（L-10）：已推送 `73fdd19..c05b2f8` 并实际跑通，
+      Backend（ruff / mypy / pytest）与 Frontend（typecheck / lint / test）双 job 全绿。
+      P2 代码首次在 Ubuntu + Postgres 16 + Redis 7 容器环境得到验证
 - [ ] 按 PRD 36.3 必测清单，逐项映射到测试用例（已有大量单元测试，但尚未形成逐条映射表，部分不变量如补数、LLM、Freqtrade 对账仍缺测试）
 
 ## P1：行情采集层（Phase 1，M1 数据可信）
@@ -47,10 +46,14 @@
       四张表落库、幂等语义、迁移漂移（详见 `docs/遗留问题.md` 附录）
 - [x] 修复真库验证暴露的 4 个缺陷：`rowcount` 误判、`as_of` 水位线缺失（前视偏差）、
       陈旧年龄负数、基差缺失原因不精确
-- [ ] **SPOT 市场分流**（L-01）：现货 collector 会去拉 fapi 的 OI / funding，
-      端点路径与数据语义都不适用；现货只需盘口 + 成交（基差用）
-- [ ] **资金费率陈旧判定落地**（L-02）：`FUNDING_STALE_THRESHOLD_SECONDS` 等常量
-      已定义但从未使用，资金费率陈旧不产生 `DATA_STALE`
+- [x] **SPOT 市场分流**（L-01）：新增 `MARKET_CAPABILITIES` 能力表 + `supports()`，
+      client 层 `_get_supported()` 在发请求前拦截并抛 `UnsupportedMarketError`，
+      collector 按能力不排期衍生品轮询、现货不订阅 `markPrice` 流。
+      实测现货请求数从 4 降到 1（只剩盘口深度）
+- [x] **资金费率陈旧判定落地**（L-02）：按 PRD 29.4.3 实现两条判定——
+      `_check_funding_history_staleness()`（REST，阈值 8h）与
+      `_check_funding_current_staleness()`（WS markPrice，阈值 2min），
+      `detected_by` 区分 `REST` / `WS`
 - [ ] **数据保留与清理**（L-03、L-04）：`MARKET_TRADE_RETENTION_DAYS`、
       `RETENTION_ENABLED` 均只声明未消费；`market_trades` / `orderbook_snapshots`
       无限增长，与 PRD 27.3 冲突

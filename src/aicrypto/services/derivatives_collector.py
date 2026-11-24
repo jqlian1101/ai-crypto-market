@@ -86,6 +86,8 @@ OI_STALE_THRESHOLD_SECONDS = 180.0
 FUNDING_STALE_THRESHOLD_SECONDS = 120.0
 #: Funding 历史陈旧阈值（29.4.3：允许 1 个周期）
 FUNDING_HISTORY_STALE_THRESHOLD_SECONDS = 8 * 3600.0
+#: 当前资金费率陈旧的检查间隔（阈值是 2 分钟，查太密会刷重复事件）
+FUNDING_CURRENT_CHECK_INTERVAL_SECONDS = 30.0
 #: REST 连续失败多少次判定不可用（与 K 线采集一致）
 REST_FAILURE_THRESHOLD = 3
 
@@ -126,6 +128,9 @@ class DerivativesCollector:
             streams += mark_price_stream_names(self._symbols)
         self._url = build_stream_url(market_type, streams)
         self._mark_prices: dict[str, Any] = {}
+        # 每个 symbol 最近一次收到 markPrice（当前预估资金费率）的时刻。
+        # 用于判定「当前资金费率是否已陈旧」（29.4.3 通路 C）。
+        self._funding_current_seen_at: dict[str, dt.datetime] = {}
 
     # ------------------------------------------------------------------ 生命周期
 
@@ -171,6 +176,9 @@ class DerivativesCollector:
         next_metadata = 0.0
         # OI 历史只在启动时拉一次：用来回填 1h 变化率窗口的起点
         next_oi_history = 0.0 if self._has_oi else float("inf")
+        # 当前资金费率的陈旧检查：阈值 2 分钟，每 30 秒查一次足够，
+        # 又不至于给质量事件表刷出重复记录。
+        next_funding_current_check = float("inf")
 
         while not self._stop.is_set():
             now = self._monotonic()
@@ -190,6 +198,9 @@ class DerivativesCollector:
             if now >= next_metadata:
                 await self._guard(self._poll_instrument_metadata())
                 next_metadata = now + metadata_interval_seconds()
+            if now >= next_funding_current_check:
+                await self._guard(self._check_funding_current_staleness())
+                next_funding_current_check = now + FUNDING_CURRENT_CHECK_INTERVAL_SECONDS
             if await self._sleep_or_stop(1.0):
                 return
 
@@ -278,6 +289,81 @@ class DerivativesCollector:
             staleness_seconds=round(check.staleness_seconds, 1),
         )
 
+    async def _check_funding_history_staleness(
+        self, symbol: str, funding_time: dt.datetime, fetched_at: dt.datetime
+    ) -> None:
+        """funding 历史陈旧判定（29.4.3 通路 C）。
+
+        资金费率每 **8 小时**结算一次，因此历史记录允许滞后 1 个周期。
+        若最新一条记录的 ``funding_time`` 距今已超过 1 个周期，
+        说明**已经错过了一次结算**——下游据此计算的费率不再可信。
+        """
+        check = evaluate_staleness(
+            funding_time,
+            fetched_at=fetched_at,
+            threshold_seconds=FUNDING_HISTORY_STALE_THRESHOLD_SECONDS,
+        )
+        metrics.market_derivatives_stale_seconds.labels(
+            symbol=symbol, market_type=self._market_type, dataset="funding_history"
+        ).set(check.staleness_seconds)
+        if not check.stale:
+            return
+        event = build_stale_event(
+            market_type=self._market_type,
+            symbol=symbol,
+            check=check,
+            detected_at=fetched_at,
+        )
+        await asyncio.to_thread(self._write_events, [event])
+        logger.warning(
+            "资金费率历史数据陈旧",
+            symbol=symbol,
+            staleness_seconds=round(check.staleness_seconds, 1),
+        )
+
+    async def _check_funding_current_staleness(self) -> None:
+        """资金费率**当前值**陈旧判定（29.4.3 通路 C）。
+
+        当前预估资金费率来自 WS ``markPrice`` 流（1 秒推送一次），
+        所以「陈旧」的实际含义是「**已经多久没收到新的 markPrice 消息**」——
+        这是 WS 断流/半开的信号，而不是单条消息的业务时间陈旧。
+
+        阈值 2 分钟：超过 2 分钟没收到推送即判定当前费率不可信。
+        """
+        if not self._has_mark_price:
+            return
+        now = self._clock()
+        for symbol in self._symbols:
+            seen_at = self._funding_current_seen_at.get(symbol)
+            if seen_at is None:
+                # 从未收到过：WS 尚未建立或已断流。
+                # 不在此处写事件——WS 断流本身由 _ws_loop 的重连逻辑
+                # 与 market_monitor 负责，避免同一故障写两条事件。
+                continue
+            check = evaluate_staleness(
+                seen_at,
+                fetched_at=now,
+                threshold_seconds=FUNDING_STALE_THRESHOLD_SECONDS,
+            )
+            metrics.market_derivatives_stale_seconds.labels(
+                symbol=symbol, market_type=self._market_type, dataset="funding_current"
+            ).set(check.staleness_seconds)
+            if not check.stale:
+                continue
+            event = build_stale_event(
+                market_type=self._market_type,
+                symbol=symbol,
+                check=check,
+                detected_at=now,
+                detected_by="WS",
+            )
+            await asyncio.to_thread(self._write_events, [event])
+            logger.warning(
+                "当前资金费率数据陈旧",
+                symbol=symbol,
+                staleness_seconds=round(check.staleness_seconds, 1),
+            )
+
     async def _poll_open_interest_history(self, symbol: str) -> None:
         """拉取持仓量历史（周期 5m），用于回填 1h 变化率窗口。
 
@@ -304,6 +390,7 @@ class DerivativesCollector:
             logger.debug("跳过资金费率轮询：该市场不支持", market_type=self._market_type)
             return
         for symbol in self._symbols:
+            fetched_at = self._clock()
             body = await self._rest.fetch_funding_rate(market_type=self._market_type, symbol=symbol)
             for item in body:
                 row = parse_funding_rate(item, market_type=self._market_type)
@@ -313,6 +400,11 @@ class DerivativesCollector:
                 if row["mark_price"] is None:
                     continue
                 await asyncio.to_thread(self._write_funding, row)
+                # 历史记录陈旧判定（29.4.3 通路 C）：funding_history 允许
+                # 滞后 1 个周期（8 小时）。资金费率每 8 小时结算一次，
+                # 因此「最新一条记录的 funding_time 距今超过 1 个周期」
+                # 意味着已经错过了一次结算——数据不可信。
+                await self._check_funding_history_staleness(symbol, row["funding_time"], fetched_at)
             metrics.market_derivatives_funding_written_total.labels(
                 symbol=symbol, market_type=self._market_type
             ).inc(len(body))
@@ -449,6 +541,8 @@ class DerivativesCollector:
             # markPrice 流是当前预估资金费率的低延迟触发源（29.2），
             # 但 funding_history 仍以 REST 为权威——这里只做观测。
             self._mark_prices[mark.symbol] = mark
+            # 记录收到时刻，供陈旧判定使用（29.4.3 通路 C）。
+            self._funding_current_seen_at[mark.symbol] = received_at
             metrics.market_derivatives_funding_current_rate.labels(
                 symbol=mark.symbol, market_type=self._market_type
             ).set(float(mark.funding_rate))
@@ -547,6 +641,7 @@ def metadata_interval_seconds() -> float:
 
 
 __all__ = [
+    "FUNDING_CURRENT_CHECK_INTERVAL_SECONDS",
     "FUNDING_HISTORY_STALE_THRESHOLD_SECONDS",
     "FUNDING_STALE_THRESHOLD_SECONDS",
     "OI_STALE_THRESHOLD_SECONDS",

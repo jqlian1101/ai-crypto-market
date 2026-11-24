@@ -83,8 +83,14 @@ def build_stale_event(
     symbol: str,
     check: StaleCheck,
     detected_at: dt.datetime,
+    detected_by: str = "REST",
 ) -> MarketDataQualityEvent:
-    """构造 ``DATA_STALE`` 质量事件（CRITICAL / STALE）。"""
+    """构造 ``DATA_STALE`` 质量事件（CRITICAL / STALE）。
+
+    ``detected_by`` 标明是哪条通路发现的陈旧：``REST`` 用于轮询类数据
+    （OI、funding 历史），``WS`` 用于当前预估资金费率（来自 ``markPrice`` 流）。
+    两者都走通路 C（29.4.3），但来源不同，排障时需要区分。
+    """
     return MarketDataQualityEvent(
         id=new_id("dqe", now=detected_at),
         detected_at=detected_at,
@@ -95,7 +101,7 @@ def build_stale_event(
         rule_id=check.rule_id,
         severity=Severity.CRITICAL.value,
         data_quality=DataQuality.STALE.value,
-        detected_by="REST",
+        detected_by=detected_by,
         context={
             "staleness_seconds": check.staleness_seconds,
             "threshold_seconds": check.threshold_seconds,
