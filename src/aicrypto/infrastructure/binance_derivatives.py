@@ -91,7 +91,9 @@ def endpoint_weight(endpoint: str, *, market_type: str, limit: int | None = None
 # --------------------------------------------------------------------------
 
 
-def parse_open_interest(raw: dict[str, Any], *, market_type: str = "USDM_FUTURES") -> dict[str, Any]:
+def parse_open_interest(
+    raw: dict[str, Any], *, market_type: str = "USDM_FUTURES"
+) -> dict[str, Any]:
     """解析 ``/fapi/v1/openInterest`` 的当前持仓量。
 
     响应形如 ``{"openInterest": "12345.678", "symbol": "BTCUSDT", "time": 1700000000000}``。
@@ -143,9 +145,7 @@ def parse_open_interest_history(
 # --------------------------------------------------------------------------
 
 
-def parse_funding_rate(
-    raw: dict[str, Any], *, market_type: str = "USDM_FUTURES"
-) -> dict[str, Any]:
+def parse_funding_rate(raw: dict[str, Any], *, market_type: str = "USDM_FUTURES") -> dict[str, Any]:
     """解析 ``/fapi/v1/fundingRate`` 的一条资金费率记录。
 
     响应形如::
@@ -258,9 +258,7 @@ def spread_bps(*, best_bid: Decimal, best_ask: Decimal) -> Decimal:
 # --------------------------------------------------------------------------
 
 
-def parse_instrument_metadata(
-    raw: dict[str, Any], *, market_type: str
-) -> dict[str, Any]:
+def parse_instrument_metadata(raw: dict[str, Any], *, market_type: str) -> dict[str, Any]:
     """解析 ``exchangeInfo`` 中单个 symbol 的合约规格。
 
     过滤器取值：``PRICE_FILTER.tickSize``、``LOT_SIZE.stepSize/minQty``、

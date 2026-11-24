@@ -210,9 +210,7 @@ def test_parse_depth_snapshot_rejects_empty_side() -> None:
 
 def test_spread_bps_computed_from_mid() -> None:
     # (42000.10 - 42000.00) / 42000.05 * 10000 = 0.023809495464886351...
-    value = spread_bps(
-        best_bid=Decimal("42000.00"), best_ask=Decimal("42000.10")
-    )
+    value = spread_bps(best_bid=Decimal("42000.00"), best_ask=Decimal("42000.10"))
     assert float(value) == pytest.approx(0.023809495464886351, rel=1e-12)
 
 

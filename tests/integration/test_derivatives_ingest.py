@@ -129,9 +129,7 @@ def test_open_interest_same_timestamp_is_overwritten(db: Session) -> None:
     assert persist_open_interest(db, _oi_row(BASE, "1000")) is IngestOutcome.INSERTED
     assert persist_open_interest(db, _oi_row(BASE, "1050")) is IngestOutcome.UPDATED
     db.flush()
-    rows = db.scalars(
-        select(OpenInterestHistory).where(OpenInterestHistory.symbol == SYMBOL)
-    ).all()
+    rows = db.scalars(select(OpenInterestHistory).where(OpenInterestHistory.symbol == SYMBOL)).all()
     assert len(rows) == 1
     assert rows[0].open_interest == Decimal("1050")
 
@@ -139,13 +137,9 @@ def test_open_interest_same_timestamp_is_overwritten(db: Session) -> None:
 def test_funding_rate_same_time_is_not_overwritten(db: Session) -> None:
     """资金费率是已结算的历史事实，改写即数据造假。"""
     assert persist_funding_rate(db, _funding_row(BASE, "0.0001")) is IngestOutcome.INSERTED
-    assert (
-        persist_funding_rate(db, _funding_row(BASE, "0.9999")) is IngestOutcome.DUPLICATE
-    )
+    assert persist_funding_rate(db, _funding_row(BASE, "0.9999")) is IngestOutcome.DUPLICATE
     db.flush()
-    rows = db.scalars(
-        select(FundingHistory).where(FundingHistory.symbol == SYMBOL)
-    ).all()
+    rows = db.scalars(select(FundingHistory).where(FundingHistory.symbol == SYMBOL)).all()
     assert len(rows) == 1
     assert rows[0].funding_rate == Decimal("0.0001")
 
@@ -154,9 +148,7 @@ def test_orderbook_same_timestamp_is_deduplicated(db: Session) -> None:
     assert persist_orderbook(db, _book_row(BASE)) is IngestOutcome.INSERTED
     assert persist_orderbook(db, _book_row(BASE)) is IngestOutcome.DUPLICATE
     db.flush()
-    rows = db.scalars(
-        select(OrderbookSnapshot).where(OrderbookSnapshot.symbol == SYMBOL)
-    ).all()
+    rows = db.scalars(select(OrderbookSnapshot).where(OrderbookSnapshot.symbol == SYMBOL)).all()
     assert len(rows) == 1
 
 
@@ -175,9 +167,7 @@ def test_distinct_timestamps_are_kept(db: Session) -> None:
         )
         == 3
     )
-    assert (
-        len(db.scalars(select(MarketTrade).where(MarketTrade.symbol == SYMBOL)).all()) == 3
-    )
+    assert len(db.scalars(select(MarketTrade).where(MarketTrade.symbol == SYMBOL)).all()) == 3
 
 
 # --------------------------------------------------------------------------
@@ -242,9 +232,7 @@ def test_funding_as_of_excludes_future_record(db: Session) -> None:
     """``as_of`` 之后的资金费率记录不得进入查询结果。"""
     for offset in (0, 60):
         assert (
-            persist_funding_rate(
-                db, _funding_row(BASE + dt.timedelta(minutes=offset), "0.0001")
-            )
+            persist_funding_rate(db, _funding_row(BASE + dt.timedelta(minutes=offset), "0.0001"))
             is IngestOutcome.INSERTED
         )
     db.flush()

@@ -96,8 +96,7 @@ def build_derivatives(
     # ---- Open Interest ----
     if oi_rows:
         oi_points = [
-            OpenInterestPoint(ts=row.ts, open_interest=row.open_interest)
-            for row in oi_rows
+            OpenInterestPoint(ts=row.ts, open_interest=row.open_interest) for row in oi_rows
         ]
         change = oi_change_pct(oi_points, window_seconds=OI_CHANGE_WINDOW_SECONDS)
         latest_ts = latest_oi_timestamp(db, market_type=market_type, symbol=symbol, as_of=now)
@@ -127,18 +126,14 @@ def build_derivatives(
             for row in funding_rows
         ]
         current = funding_rows[-1].funding_rate
-        latest_ts = latest_funding_timestamp(
-            db, market_type=market_type, symbol=symbol, as_of=now
-        )
+        latest_ts = latest_funding_timestamp(db, market_type=market_type, symbol=symbol, as_of=now)
         age = _age_seconds(now, latest_ts) if latest_ts else None
         result["funding"] = {
             "status": "ok",
             "current_rate": float(current),
             "current_funding_time": funding_rows[-1].funding_time.isoformat(),
             "mark_price": (
-                None
-                if funding_rows[-1].mark_price is None
-                else float(funding_rows[-1].mark_price)
+                None if funding_rows[-1].mark_price is None else float(funding_rows[-1].mark_price)
             ),
             "percentile": funding_percentile(funding_points, current=current),
             "change": funding_change(funding_points),
@@ -155,9 +150,7 @@ def build_derivatives(
     oi_block = result["open_interest"]
     funding_block = result["funding"]
     oi_change = oi_block.get("change_1h_pct") if isinstance(oi_block, dict) else None
-    funding_rate = (
-        funding_block.get("current_rate") if isinstance(funding_block, dict) else None
-    )
+    funding_rate = funding_block.get("current_rate") if isinstance(funding_block, dict) else None
     result["price_oi_divergence"] = {
         "status": "ok" if oi_change is not None else "missing_data",
         "detected": False,

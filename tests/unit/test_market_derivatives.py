@@ -38,9 +38,7 @@ BASE = dt.datetime(2026, 1, 1, tzinfo=UTC)
 
 
 def oi(hours_ago: float, value: str) -> OpenInterestPoint:
-    return OpenInterestPoint(
-        ts=BASE - dt.timedelta(hours=hours_ago), open_interest=Decimal(value)
-    )
+    return OpenInterestPoint(ts=BASE - dt.timedelta(hours=hours_ago), open_interest=Decimal(value))
 
 
 def fund(hours_ago: float, rate: str) -> FundingPoint:
@@ -150,9 +148,7 @@ def test_basis_missing_when_one_side_absent() -> None:
 
 def test_basis_stale_when_one_side_stale() -> None:
     """29.6：任一方 STALE 则基差不计算，不用陈旧值替代。"""
-    result = compute_basis(
-        quote("SPOT", state=DataState.STALE), quote("USDM_FUTURES")
-    )
+    result = compute_basis(quote("SPOT", state=DataState.STALE), quote("USDM_FUTURES"))
     assert result.state is DataState.STALE
     assert result.basis_pct is None
 
@@ -168,9 +164,7 @@ def test_basis_stale_when_snapshots_out_of_sync() -> None:
 
 
 def test_basis_missing_when_spot_mid_non_positive() -> None:
-    result = compute_basis(
-        quote("SPOT", bid="0", ask="0"), quote("USDM_FUTURES")
-    )
+    result = compute_basis(quote("SPOT", bid="0", ask="0"), quote("USDM_FUTURES"))
     assert result.state is DataState.MISSING
     assert result.basis_pct is None
 
@@ -230,17 +224,13 @@ def test_taker_volume_split_handles_no_trades() -> None:
 
 
 def test_large_trades_requires_minimum_sample() -> None:
-    trades = [
-        TradePoint(BASE, Decimal("42000"), Decimal("1"), True) for _ in range(10)
-    ]
+    trades = [TradePoint(BASE, Decimal("42000"), Decimal("1"), True) for _ in range(10)]
     # 样本太少时高分位没有统计意义
     assert large_trades(trades) == []
 
 
 def test_large_trades_flags_top_quantile() -> None:
-    trades = [
-        TradePoint(BASE, Decimal("42000"), Decimal("1"), True) for _ in range(30)
-    ]
+    trades = [TradePoint(BASE, Decimal("42000"), Decimal("1"), True) for _ in range(30)]
     trades.append(TradePoint(BASE, Decimal("42000"), Decimal("100"), True))
     found = large_trades(trades)
     assert len(found) == 1
@@ -277,6 +267,4 @@ def test_long_short_skew_labels() -> None:
     assert long_short_skew(oi_change=0.05, funding_rate=-0.001, price_change_pct=None) == (
         "SHORT_CROWDED"
     )
-    assert long_short_skew(oi_change=None, funding_rate=None, price_change_pct=None) == (
-        "UNKNOWN"
-    )
+    assert long_short_skew(oi_change=None, funding_rate=None, price_change_pct=None) == ("UNKNOWN")

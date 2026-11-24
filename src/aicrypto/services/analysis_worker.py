@@ -94,9 +94,7 @@ def _block_has_data(block: dict[str, Any]) -> bool:
     """
     if block.get("status") != "ok":
         nested = [
-            value
-            for key, value in block.items()
-            if key != "status" and isinstance(value, dict)
+            value for key, value in block.items() if key != "status" and isinstance(value, dict)
         ]
         return any(item.get("status") == "ok" for item in nested)
     return True

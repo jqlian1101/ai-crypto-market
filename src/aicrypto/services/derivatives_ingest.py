@@ -120,9 +120,7 @@ def persist_trade(db: Session, row: dict[str, Any]) -> IngestOutcome:
     stmt = (
         insert(MarketTrade)
         .values(**row)
-        .on_conflict_do_nothing(
-            index_elements=["exchange", "market_type", "symbol", "trade_id"]
-        )
+        .on_conflict_do_nothing(index_elements=["exchange", "market_type", "symbol", "trade_id"])
         .returning(MarketTrade.trade_id)
     )
     inserted = db.execute(stmt).scalar_one_or_none()
@@ -143,9 +141,7 @@ def persist_orderbook(db: Session, row: dict[str, Any]) -> IngestOutcome:
     stmt = (
         insert(OrderbookSnapshot)
         .values(**row)
-        .on_conflict_do_nothing(
-            index_elements=["exchange", "market_type", "symbol", "captured_at"]
-        )
+        .on_conflict_do_nothing(index_elements=["exchange", "market_type", "symbol", "captured_at"])
         .returning(OrderbookSnapshot.captured_at)
     )
     inserted = db.execute(stmt).scalar_one_or_none()
@@ -304,9 +300,7 @@ def load_latest_orderbook(
     )
     if as_of is not None:
         stmt = stmt.where(OrderbookSnapshot.captured_at <= as_of)
-    return db.scalars(
-        stmt.order_by(OrderbookSnapshot.captured_at.desc()).limit(1)
-    ).first()
+    return db.scalars(stmt.order_by(OrderbookSnapshot.captured_at.desc()).limit(1)).first()
 
 
 def load_recent_trades(
@@ -374,9 +368,7 @@ def latest_funding_timestamp(
     )
     if as_of is not None:
         stmt = stmt.where(FundingHistory.funding_time <= as_of)
-    return db.scalars(
-        stmt.order_by(FundingHistory.funding_time.desc()).limit(1)
-    ).first()
+    return db.scalars(stmt.order_by(FundingHistory.funding_time.desc()).limit(1)).first()
 
 
 def decimals_to_float(value: Decimal | None) -> float | None:

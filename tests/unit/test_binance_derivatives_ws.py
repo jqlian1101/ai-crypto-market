@@ -108,9 +108,7 @@ def test_parse_agg_trade_taker_buy_direction() -> None:
 
 
 def test_parse_agg_trade_row_shape() -> None:
-    event = parse_agg_trade_message(
-        make_agg_trade(), market_type="SPOT", received_at=RECEIVED
-    )
+    event = parse_agg_trade_message(make_agg_trade(), market_type="SPOT", received_at=RECEIVED)
     assert event is not None
     row = event.row()
     assert set(row) == {
@@ -192,6 +190,8 @@ def test_parse_mark_price_missing_field_raises() -> None:
 
 def test_parse_non_mark_price_returns_none() -> None:
     assert (
-        parse_mark_price_message({"data": {"e": "aggTrade"}}, market_type="SPOT", received_at=RECEIVED)
+        parse_mark_price_message(
+            {"data": {"e": "aggTrade"}}, market_type="SPOT", received_at=RECEIVED
+        )
         is None
     )

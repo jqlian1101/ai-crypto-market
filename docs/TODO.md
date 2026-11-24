@@ -1,8 +1,11 @@
 # AICryptoMarket 完整 TODO List
 
 > 状态说明：`[x]` 表示已实现**且有测试覆盖**；`[ ]` 表示未做或未验证。
-> 最近一次核对：P0 / P1 / P2 的主体已完成，后端测试 443 passed / 11 skipped
-> （skipped 均为需要 PostgreSQL 的集成测试）。
+> 最近一次核对：P0 / P1 / P2 的主体已完成，后端测试 **551 passed / 0 skipped**
+> （已启动本地 Postgres 跑通全部集成测试；此前为 443 passed / 11 skipped）。
+>
+> **遗留问题（已确认存在但未修复）单独记录在 [`docs/遗留问题.md`](遗留问题.md)**，
+> 本清单只列任务级待办。
 
 ## P0：工程底座（先做）
 
@@ -11,8 +14,12 @@
 - [x] 运行并修复现有测试基线
 - [x] 建立 `config/catalog.toml` 与 CI 校验，确认与 `Settings` 一致（PRD 32.5）
 - [x] 补齐 `tests/fixtures/anomaly/`，生成异动规则回放基线 `baseline.json`（PRD 36.5、28.2 第 10 项）
-- [ ] 打通集成测试环境：设置 `ANALYSIS_TEST_DATABASE_URL` / `ANOMALY_TEST_DATABASE_URL`，
-      当前 11 个集成测试全部 skip，DB 相关改动存在盲区
+- [x] 打通集成测试环境：本地已用 `docker compose` 启动 Postgres/Redis，
+      设置 `ANALYSIS_TEST_DATABASE_URL` / `ANOMALY_TEST_DATABASE_URL` 后 11 个集成测试全部执行
+- [ ] **推送本地提交触发 CI**（L-10）：本地领先 `origin/main` 2 个提交（P2 + 验证修复），
+      CI 从未运行过 P2 代码。CI 配置本身完备（已含 Postgres/Redis service container
+      与两个测试库环境变量），**不是配置缺失，是没推上去**。
+      注意 CI 还跑 `ruff format --check`，本次仅跑了 `ruff check`
 - [ ] 按 PRD 36.3 必测清单，逐项映射到测试用例（已有大量单元测试，但尚未形成逐条映射表，部分不变量如补数、LLM、Freqtrade 对账仍缺测试）
 
 ## P1：行情采集层（Phase 1，M1 数据可信）
@@ -36,14 +43,35 @@
 - [x] 采集成交流写入 `market_trades`（WS `aggTrade`）
 - [x] 快照构建接入衍生品与盘口数据，移除 `data_quality="DEGRADED"` 的临时标记（`analysis_worker.py`）
 - [x] 补齐 Derivatives、Liquidity 所需的特征计算（`domain/market/derivatives.py`）
+- [x] 真实 API 与真实库端到端验证：9 项 REST 解析、spot WS 实时消息解析、
+      四张表落库、幂等语义、迁移漂移（详见 `docs/遗留问题.md` 附录）
+- [x] 修复真库验证暴露的 4 个缺陷：`rowcount` 误判、`as_of` 水位线缺失（前视偏差）、
+      陈旧年龄负数、基差缺失原因不精确
+- [ ] **SPOT 市场分流**（L-01）：现货 collector 会去拉 fapi 的 OI / funding，
+      端点路径与数据语义都不适用；现货只需盘口 + 成交（基差用）
+- [ ] **资金费率陈旧判定落地**（L-02）：`FUNDING_STALE_THRESHOLD_SECONDS` 等常量
+      已定义但从未使用，资金费率陈旧不产生 `DATA_STALE`
+- [ ] **数据保留与清理**（L-03、L-04）：`MARKET_TRADE_RETENTION_DAYS`、
+      `RETENTION_ENABLED` 均只声明未消费；`market_trades` / `orderbook_snapshots`
+      无限增长，与 PRD 27.3 冲突
+- [ ] **接入真实价格变化率**（L-06）：`long_short_skew()` 的 `price_change_pct`
+      恒传 `None`，`price_oi_divergence()` 无调用点，导致多空偏向与价格/OI 背离
+      永远无法产出（静默失效）
+- [ ] **futures WS 实盘验证**（L-08）：本机 `fstream.binance.com` 连得上但收不到消息，
+      `markPrice` 流与 futures `aggTrade` 落库路径未跑通；需换网络环境补验
 - [ ] 第二数据源交叉校验：OI / Funding / 盘口目前只有 Binance 单源（PRD 28.2 第 8 项）
 - [ ] 接入 P3 衍生品异动规则：`DER_OI_SURGE` / `DER_OI_FLUSH` / `DER_FUNDING_EXTREME` /
       `DER_FUNDING_FLIP` / `DER_BASIS_EXTREME` / `DER_LS_SKEW` / `DER_PRICE_OI_DIVERGENCE`
+      （阈值已在 `config/base.toml` 备好，但无代码读取，见 L-07）
 
 ## P3：异动检测（Phase 2.5）
 
 - [ ] 核对 PRD 22.2 约 40 条规则，补齐 MVP 要求的价格、成交量、衍生品核心规则
-- [ ] 衍生品类规则接入 P2 数据后启用
+- [ ] 衍生品类规则接入 P2 数据后启用（阈值已在 `config/base.toml` 的
+      `[anomaly.rules.derivatives]` 备好，但当前无代码读取，见 L-07）
+- [ ] `DER_FUNDING_EXTREME` 用 WS `markPrice` 预估费率做低延迟触发源（L-05）；
+      注意只写 `anomaly_events`，**不回写** `funding_history`（已结算事实不可改写）
+- [ ] `DER_LS_SKEW` / `DER_PRICE_OI_DIVERGENCE` 需先补真实价格变化率输入（L-06）
 - [ ] 显式禁用依赖 1m 的规则，并在配置中留痕
 - [ ] 异动阈值用 2–4 周历史数据回放校准（PRD 28.2 第 4 项）
 - [ ] 每条规则的历史触发频率与后续方向性统计（PRD 28.2 第 5 项）
@@ -169,9 +197,13 @@
 
 - [ ] 确认 `docker-compose` 端口绑定 `127.0.0.1`（PRD 34.5）
 - [ ] 家用宽带固定出口方案（PRD 28.2 第 2 项）
+- [ ] **换网络环境补验 futures WS 与现货 REST**（L-08、L-09）：
+      本机 `fstream.binance.com` 与 `api.binance.com` 的 REST/WS 均不通，
+      衍生品实时流与基差双侧采集未经实盘验证
 - [ ] 密钥轮换流程（PRD 34.9）
 - [ ] 工具权限矩阵与 Tool Gateway（PRD 10.5、34.8）
 - [ ] 备份策略与保留策略（PRD 27.3、37.7）
+      —— 保留策略的**执行部分**见 L-03 / L-04
 - [ ] 核对 `.env` 不入库（`.gitignore`）
 - [ ] 指标埋点覆盖业务侧调用（PRD 37.2）
 - [ ] 日志脱敏校验（`common/redaction.py`）

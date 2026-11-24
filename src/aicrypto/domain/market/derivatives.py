@@ -96,9 +96,7 @@ class QuotePoint:
 # --------------------------------------------------------------------------
 
 
-def oi_change_pct(
-    points: Sequence[OpenInterestPoint], *, window_seconds: int
-) -> float | None:
+def oi_change_pct(points: Sequence[OpenInterestPoint], *, window_seconds: int) -> float | None:
     """窗口内持仓量变化率（小数）。
 
     取窗口起点与终点两个采样点。样本不足（少于 2 个点）时返回 ``None``，
@@ -118,9 +116,7 @@ def oi_change_pct(
     return float((end.open_interest - start.open_interest) / start.open_interest)
 
 
-def oi_trend(
-    points: Sequence[OpenInterestPoint], *, window_seconds: int
-) -> str:
+def oi_trend(points: Sequence[OpenInterestPoint], *, window_seconds: int) -> str:
     """持仓量趋势标签：``UP`` / ``DOWN`` / ``FLAT`` / ``UNKNOWN``。"""
     change = oi_change_pct(points, window_seconds=window_seconds)
     if change is None:
@@ -152,9 +148,7 @@ def funding_percentile(
     return (below + equal / 2) / len(rates)
 
 
-def funding_change(
-    points: Sequence[FundingPoint], *, lookback: int = 3
-) -> float | None:
+def funding_change(points: Sequence[FundingPoint], *, lookback: int = 3) -> float | None:
     """资金费率变化量（当前值 − ``lookback`` 期前的值）。"""
     if len(points) < 2:
         return None
@@ -165,9 +159,7 @@ def funding_change(
     return float(window[-1].funding_rate - window[0].funding_rate)
 
 
-def funding_flip(
-    points: Sequence[FundingPoint], *, lookback: int = 2
-) -> bool:
+def funding_flip(points: Sequence[FundingPoint], *, lookback: int = 2) -> bool:
     """资金费率是否在最近 ``lookback`` 期内穿越零点（``DER_FUNDING_FLIP``）。"""
     if len(points) < 2:
         return False
@@ -195,9 +187,7 @@ class BasisResult:
         return self.basis_pct is not None
 
 
-def compute_basis(
-    spot: QuotePoint | None, futures: QuotePoint | None
-) -> BasisResult:
+def compute_basis(spot: QuotePoint | None, futures: QuotePoint | None) -> BasisResult:
     """计算 Spot-Futures 基差（小数，如 0.0012 表示 0.12%）。
 
     规则（29.6）：
@@ -216,14 +206,10 @@ def compute_basis(
             stale_side.append("现货")
         if futures.state is not DataState.GOOD:
             stale_side.append("期货")
-        return BasisResult(
-            None, DataState.STALE, f"{'、'.join(stale_side)}报价陈旧，不计算基差"
-        )
+        return BasisResult(None, DataState.STALE, f"{'、'.join(stale_side)}报价陈旧，不计算基差")
     skew = abs((futures.captured_at - spot.captured_at).total_seconds())
     if skew > BASIS_MAX_TIME_SKEW_SECONDS:
-        return BasisResult(
-            None, DataState.STALE, f"两侧快照时间错位 {skew:.1f}s 超过阈值"
-        )
+        return BasisResult(None, DataState.STALE, f"两侧快照时间错位 {skew:.1f}s 超过阈值")
     mid = spot.mid_price
     if mid <= 0:
         return BasisResult(None, DataState.MISSING, "现货中间价非正")
@@ -272,9 +258,7 @@ def taker_volume_split(trades: Sequence[TradePoint]) -> dict[str, float]:
     }
 
 
-def large_trades(
-    trades: Sequence[TradePoint], *, quantile: float = 0.99
-) -> list[dict[str, Any]]:
+def large_trades(trades: Sequence[TradePoint], *, quantile: float = 0.99) -> list[dict[str, Any]]:
     """大额成交：成交量超过给定分位阈值的成交。
 
     分位按同批成交的成交量计算。样本不足 20 笔时返回空列表

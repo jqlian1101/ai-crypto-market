@@ -269,9 +269,7 @@ class DerivativesCollector:
     async def _poll_funding(self) -> None:
         """轮询资金费率历史，并记录当前预估费率。"""
         for symbol in self._symbols:
-            body = await self._rest.fetch_funding_rate(
-                market_type=self._market_type, symbol=symbol
-            )
+            body = await self._rest.fetch_funding_rate(market_type=self._market_type, symbol=symbol)
             for item in body:
                 row = parse_funding_rate(item, market_type=self._market_type)
                 if row["mark_price"] is None:
@@ -338,9 +336,7 @@ class DerivativesCollector:
                 reason = type(exc).__name__
             except Exception as exc:
                 reason = f"error:{type(exc).__name__}"
-                logger.error(
-                    "衍生品 WS 异常", market_type=self._market_type, error=str(exc)
-                )
+                logger.error("衍生品 WS 异常", market_type=self._market_type, error=str(exc))
             delay = reconnect_delay_seconds(
                 self._attempt, max_ms=self._settings.MARKET_WS_RECONNECT_MAX_MS
             )

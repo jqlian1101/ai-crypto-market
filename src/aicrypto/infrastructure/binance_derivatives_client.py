@@ -80,9 +80,7 @@ class BinanceDerivativesClient:
 
     # ------------------------------------------------------------------ OI
 
-    async def fetch_open_interest(
-        self, *, market_type: str, symbol: str
-    ) -> dict[str, Any]:
+    async def fetch_open_interest(self, *, market_type: str, symbol: str) -> dict[str, Any]:
         """当前持仓量。"""
         body = await self._get(
             market_type,
@@ -200,9 +198,7 @@ class BinanceDerivativesClient:
     async def fetch_exchange_info(self, *, market_type: str) -> dict[str, Any]:
         """合约规格与精度。"""
         path = (
-            FUTURES_EXCHANGE_INFO_PATH
-            if market_type == "USDM_FUTURES"
-            else SPOT_EXCHANGE_INFO_PATH
+            FUTURES_EXCHANGE_INFO_PATH if market_type == "USDM_FUTURES" else SPOT_EXCHANGE_INFO_PATH
         )
         body = await self._get(market_type, path, endpoint="exchange_info")
         if not isinstance(body, dict):
@@ -210,9 +206,7 @@ class BinanceDerivativesClient:
         return body
 
 
-def stale_seconds(
-    business_ts: dt.datetime, *, fetched_at: dt.datetime
-) -> float:
+def stale_seconds(business_ts: dt.datetime, *, fetched_at: dt.datetime) -> float:
     """业务时间与拉取时间之差（秒），用于陈旧判定（29.4.3）。"""
     return max(0.0, (fetched_at - business_ts).total_seconds())
 
