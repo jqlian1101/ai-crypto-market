@@ -56,6 +56,15 @@ def _missing(reason: str) -> dict[str, Any]:
     return {"status": "missing_data", "reason": reason}
 
 
+def _age_seconds(now: dt.datetime, business_ts: dt.datetime) -> float:
+    """数据年龄（秒）。
+
+    钳制到 0 下界：``now`` 早于数据业务时间时（时钟漂移或调用方传了
+    历史时刻）不得产生负数年龄——负数会让「陈旧」判定被静默绕过。
+    """
+    return max(0.0, (now - business_ts).total_seconds())
+
+
 def build_derivatives(
     db: Session,
     *,
@@ -69,11 +78,13 @@ def build_derivatives(
         market_type=market_type,
         symbol=symbol,
         since=now - dt.timedelta(seconds=OI_CHANGE_WINDOW_SECONDS * 2),
+        as_of=now,
     )
     funding_rows = load_funding_rates(
         db,
         market_type=market_type,
         symbol=symbol,
+        as_of=now,
         limit=100,
     )
 
@@ -89,8 +100,8 @@ def build_derivatives(
             for row in oi_rows
         ]
         change = oi_change_pct(oi_points, window_seconds=OI_CHANGE_WINDOW_SECONDS)
-        latest_ts = latest_oi_timestamp(db, market_type=market_type, symbol=symbol)
-        age = (now - latest_ts).total_seconds() if latest_ts else None
+        latest_ts = latest_oi_timestamp(db, market_type=market_type, symbol=symbol, as_of=now)
+        age = _age_seconds(now, latest_ts) if latest_ts else None
         result["open_interest"] = {
             "status": "ok",
             "latest": float(oi_rows[-1].open_interest),
@@ -116,8 +127,10 @@ def build_derivatives(
             for row in funding_rows
         ]
         current = funding_rows[-1].funding_rate
-        latest_ts = latest_funding_timestamp(db, market_type=market_type, symbol=symbol)
-        age = (now - latest_ts).total_seconds() if latest_ts else None
+        latest_ts = latest_funding_timestamp(
+            db, market_type=market_type, symbol=symbol, as_of=now
+        )
+        age = _age_seconds(now, latest_ts) if latest_ts else None
         result["funding"] = {
             "status": "ok",
             "current_rate": float(current),
@@ -165,12 +178,13 @@ def build_liquidity(
     now: dt.datetime,
 ) -> dict[str, Any]:
     """构建流动性特征块（盘口 + 成交）。"""
-    book_row = load_latest_orderbook(db, market_type=market_type, symbol=symbol)
+    book_row = load_latest_orderbook(db, market_type=market_type, symbol=symbol, as_of=now)
     trades = load_recent_trades(
         db,
         market_type=market_type,
         symbol=symbol,
         since=now - dt.timedelta(seconds=TRADE_WINDOW_SECONDS),
+        as_of=now,
     )
 
     result: dict[str, Any] = {}
@@ -178,7 +192,7 @@ def build_liquidity(
     if book_row is None:
         result["orderbook"] = _missing("无盘口快照")
     else:
-        age = (now - book_row.captured_at).total_seconds()
+        age = _age_seconds(now, book_row.captured_at)
         if age > BOOK_STALE_SECONDS:
             result["orderbook"] = {
                 "status": "missing_data",
@@ -247,10 +261,21 @@ def build_basis(
     futures = _quote_point(db, market_type="USDM_FUTURES", symbol=symbol, now=now)
     result = compute_basis(spot, futures)
     if not result.is_available:
+        # 明确区分「没采到」与「采到了但陈旧」，避免下游误判原因
+        if spot is None and futures is None:
+            reason = "现货与期货均无盘口快照"
+        elif spot is None:
+            reason = "无现货盘口快照"
+        elif futures is None:
+            reason = "无期货盘口快照"
+        else:
+            reason = result.detail or result.state.value
         return {
             "status": "missing_data",
             "basis_pct": None,
-            "reason": result.detail or result.state.value,
+            "reason": reason,
+            "spot_state": spot.state.value if spot else "MISSING",
+            "futures_state": futures.state.value if futures else "MISSING",
         }
     return {
         "status": "ok",
@@ -270,10 +295,10 @@ def _quote_point(
     db: Session, *, market_type: str, symbol: str, now: dt.datetime
 ) -> QuotePoint | None:
     """从最新盘口快照构造报价点，附带陈旧状态。"""
-    row = load_latest_orderbook(db, market_type=market_type, symbol=symbol)
+    row = load_latest_orderbook(db, market_type=market_type, symbol=symbol, as_of=now)
     if row is None:
         return None
-    age = (now - row.captured_at).total_seconds()
+    age = _age_seconds(now, row.captured_at)
     state = DataState.GOOD if age <= BOOK_STALE_SECONDS else DataState.STALE
     return QuotePoint(
         market_type=market_type,

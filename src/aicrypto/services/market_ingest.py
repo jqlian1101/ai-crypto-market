@@ -16,11 +16,10 @@ import json
 from dataclasses import dataclass
 from decimal import Decimal
 from enum import StrEnum
-from typing import Any, cast
+from typing import Any
 
 from sqlalchemy import select, update
 from sqlalchemy.dialects.postgresql import insert
-from sqlalchemy.engine import CursorResult
 from sqlalchemy.orm import Session
 
 from aicrypto.common.clock import now as clock_now
@@ -183,9 +182,12 @@ def persist_closed_candle(
             .on_conflict_do_nothing(
                 index_elements=["exchange", "market_type", "symbol", "timeframe", "open_time"]
             )
+            .returning(MarketCandle.open_time)
         )
-        result = cast(CursorResult[Any], db.execute(stmt))
-        if result.rowcount:
+        # 不依赖 rowcount：ORM insert 会自动追加 RETURNING，psycopg 此时
+        # 返回 -1（未知），真假判断会永远成立。冲突跳过时 RETURNING 无行。
+        inserted = db.execute(stmt).scalar_one_or_none()
+        if inserted is not None:
             return PersistOutcome.INSERTED
         # 并发插入竞争：重读后按冲突路径处理
         existing = db.scalars(select(MarketCandle).where(*_pk_filters(row))).first()

@@ -211,7 +211,14 @@ def compute_basis(
     if spot is None or futures is None:
         return BasisResult(None, DataState.MISSING, "缺少现货或期货报价")
     if spot.state is not DataState.GOOD or futures.state is not DataState.GOOD:
-        return BasisResult(None, DataState.STALE, "报价状态非 GOOD")
+        stale_side = []
+        if spot.state is not DataState.GOOD:
+            stale_side.append("现货")
+        if futures.state is not DataState.GOOD:
+            stale_side.append("期货")
+        return BasisResult(
+            None, DataState.STALE, f"{'、'.join(stale_side)}报价陈旧，不计算基差"
+        )
     skew = abs((futures.captured_at - spot.captured_at).total_seconds())
     if skew > BASIS_MAX_TIME_SKEW_SECONDS:
         return BasisResult(

@@ -28,6 +28,10 @@ from aicrypto.infrastructure.database.models.market import (
 )
 from aicrypto.services.derivatives_ingest import (
     IngestOutcome,
+    load_funding_rates,
+    load_latest_orderbook,
+    load_open_interest,
+    load_recent_trades,
     persist_funding_rate,
     persist_open_interest,
     persist_orderbook,
@@ -174,3 +178,78 @@ def test_distinct_timestamps_are_kept(db: Session) -> None:
     assert (
         len(db.scalars(select(MarketTrade).where(MarketTrade.symbol == SYMBOL)).all()) == 3
     )
+
+
+# --------------------------------------------------------------------------
+# 水位线（as_of）—— 防止前视偏差
+# --------------------------------------------------------------------------
+
+
+def test_orderbook_as_of_excludes_future_snapshot(db: Session) -> None:
+    """``as_of`` 之后采集的盘口不得进入查询结果。"""
+    early = BASE
+    late = BASE + dt.timedelta(hours=1)
+    assert persist_orderbook(db, _book_row(early)) is IngestOutcome.INSERTED
+    assert persist_orderbook(db, _book_row(late)) is IngestOutcome.INSERTED
+    db.flush()
+
+    got = load_latest_orderbook(
+        db, market_type=MARKET, symbol=SYMBOL, as_of=early + dt.timedelta(minutes=1)
+    )
+    assert got is not None
+    assert got.captured_at == early
+
+
+def test_open_interest_as_of_excludes_future_sample(db: Session) -> None:
+    """``as_of`` 之后的持仓量采样不得进入查询结果。"""
+    for offset in (0, 60, 120):
+        assert (
+            persist_open_interest(db, _oi_row(BASE + dt.timedelta(minutes=offset)))
+            is IngestOutcome.INSERTED
+        )
+    db.flush()
+
+    rows = load_open_interest(
+        db,
+        market_type=MARKET,
+        symbol=SYMBOL,
+        as_of=BASE + dt.timedelta(minutes=90),
+    )
+    assert [r.ts for r in rows] == [
+        BASE,
+        BASE + dt.timedelta(minutes=60),
+    ]
+
+
+def test_trades_as_of_excludes_future_trade(db: Session) -> None:
+    """``as_of`` 之后的成交不得进入查询结果。"""
+    for offset in (0, 60):
+        row = _trade_row(offset)
+        row["exchange_ts"] = BASE + dt.timedelta(minutes=offset)
+        assert persist_trade(db, row) is IngestOutcome.INSERTED
+    db.flush()
+
+    trades = load_recent_trades(
+        db,
+        market_type=MARKET,
+        symbol=SYMBOL,
+        as_of=BASE + dt.timedelta(minutes=30),
+    )
+    assert len(trades) == 1
+
+
+def test_funding_as_of_excludes_future_record(db: Session) -> None:
+    """``as_of`` 之后的资金费率记录不得进入查询结果。"""
+    for offset in (0, 60):
+        assert (
+            persist_funding_rate(
+                db, _funding_row(BASE + dt.timedelta(minutes=offset), "0.0001")
+            )
+            is IngestOutcome.INSERTED
+        )
+    db.flush()
+
+    rows = load_funding_rates(
+        db, market_type=MARKET, symbol=SYMBOL, as_of=BASE + dt.timedelta(minutes=30)
+    )
+    assert len(rows) == 1
