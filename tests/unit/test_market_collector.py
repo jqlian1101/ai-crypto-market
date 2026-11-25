@@ -56,6 +56,10 @@ def fake_scope() -> Iterator[Any]:
 
 
 def make_collector(log: list[str], **kw: Any) -> mc.MarketCollector:
+    # 单调时钟必须可控：``_consume`` 用它判断「连接是否达到存活上限」。
+    # 若用真实 ``time.monotonic()``，测试里 ``connected_at=0.0`` 会被当成
+    # 「已连接 24 小时」，连接立刻被轮换，半开检测根本走不到。
+    monotonic = kw.pop("monotonic", lambda: 0.0)
     return mc.MarketCollector(
         settings=make_settings(),
         market_type="USDM_FUTURES",
@@ -64,6 +68,7 @@ def make_collector(log: list[str], **kw: Any) -> mc.MarketCollector:
         rest=FakeRest(log),  # type: ignore[arg-type]
         db_scope=fake_scope,
         clock=lambda: NOW,
+        monotonic=monotonic,
         **kw,
     )
 

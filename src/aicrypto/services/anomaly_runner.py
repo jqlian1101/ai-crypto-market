@@ -18,8 +18,10 @@ from dataclasses import dataclass, field
 from redis.asyncio import Redis
 
 from aicrypto.common.clock import now
+from aicrypto.config.anomaly_rules import load_anomaly_rule_config
 from aicrypto.config.market_symbols import resolve_market_symbols
 from aicrypto.config.settings import LockMode, Settings, get_settings
+from aicrypto.domain.anomaly.derivatives_rules import DerivativesThresholds
 from aicrypto.infrastructure import metrics
 from aicrypto.infrastructure.anomaly_state import load_last_fired
 from aicrypto.infrastructure.database.session import session_scope
@@ -27,12 +29,16 @@ from aicrypto.services.anomaly_scan import (
     SEED_RULE_IDS,
     ScanOutcome,
     ensure_rule_version,
+    load_derivatives_inputs,
     scan_symbol,
 )
 from aicrypto.services.notification_dispatch import deliver_pending_anomalies
 
 LOCK_KEY = "anomaly_scan"
 LOCK_TTL_SECONDS = 120
+#: 1m 依赖规则按 PRD 22.2 / 29.2.1 必须显式禁用。
+#: 实际取值以 ``base.toml`` 的 ``[anomaly.rules].disabled_rules`` 为准，
+#: 这里作为配置缺失时的兜底。
 DEFAULT_DISABLED_RULES = [
     "PRICE_PCT_1M",
     "PRICE_PCT_1M_CRIT",
@@ -67,6 +73,23 @@ async def _run_with_client(symbols: list[str], settings: Settings, redis: Redis)
 
     try:
         outcomes: list[ScanOutcome] = []
+        rule_config = load_anomaly_rule_config()
+        # 禁用规则以 base.toml 为准（22.2 / 29.2.1）；配置缺失时用兜底常量。
+        disabled_rules = (
+            list(rule_config.disabled_rules)
+            if rule_config.disabled_rules
+            else list(DEFAULT_DISABLED_RULES)
+        )
+        # 阈值来自 base.toml（22.2）：配置化必须真的生效，不能只用硬编码默认值。
+        derivatives_thresholds = DerivativesThresholds(
+            oi_change_warn_pct=rule_config.derivatives.oi_change_warn_pct,
+            oi_change_critical_pct=rule_config.derivatives.oi_change_critical_pct,
+            funding_abs_warn=rule_config.derivatives.funding_abs_warn,
+            funding_abs_critical=rule_config.derivatives.funding_abs_critical,
+            divergence_pct=rule_config.derivatives.divergence_pct,
+            basis_percentile=rule_config.derivatives.basis_percentile,
+            ls_skew_percentile=rule_config.derivatives.ls_skew_percentile,
+        )
         for symbol in symbols:
             # 冷却状态预取：决定本轮是否产生新事件（影响落库量），必须在扫描前读取。
             cooldown_keys = [f"{symbol}:{rule_id}" for rule_id in SEED_RULE_IDS]
@@ -79,13 +102,22 @@ async def _run_with_client(symbols: list[str], settings: Settings, redis: Redis)
 
             with session_scope(settings) as db:
                 ensure_rule_version(db, now=cutoff)
+                derivatives = load_derivatives_inputs(
+                    db,
+                    symbol=symbol,
+                    cutoff=cutoff,
+                    oi_window_seconds=rule_config.derivatives.oi_window_seconds,
+                    funding_stale_seconds=rule_config.derivatives.funding_stale_seconds,
+                )
                 outcome = scan_symbol(
                     db,
                     symbol=symbol,
                     cutoff=cutoff,
-                    disabled_rules=DEFAULT_DISABLED_RULES,
+                    disabled_rules=disabled_rules,
                     delivered_keys=delivered,
                     last_fired_at=last_fired,
+                    derivatives=derivatives,
+                    derivatives_thresholds=derivatives_thresholds,
                 )
             # 扫描侧只落库，不写去重/冷却 Redis 状态。
             # 去重与冷却必须在「投递成功」后写入（PRD 22.4.4.1），否则投递失败会吞掉告警。

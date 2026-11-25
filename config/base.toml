@@ -58,6 +58,16 @@ oi_change_critical_pct = 6.0
 # 资金费率极端（22.2.4，8h 口径）
 funding_abs_warn = 0.0005
 funding_abs_critical = 0.001
+# 价格/OI 背离（22.2.4）：价格与 OI 反向变动都需超过此阈值（百分比）
+divergence_pct = 1.0
+# 基差异常（22.2.4）：|basis| 处于历史该分位以上
+basis_percentile = 95.0
+# 多空拥挤（22.2.4）：多空比处于历史该分位以上或以下 5%
+ls_skew_percentile = 95.0
+# OI 变化率窗口（秒）。1h 与 22.2.4 一致。
+oi_window_seconds = 3600
+# 资金费率当前值的陈旧阈值（秒）。超过则不参与判定（29.4.3 通路 C）。
+funding_stale_seconds = 120.0
 
 [anomaly.rules.data_quality]
 # 数据缺口容忍度（缺失根数）

@@ -64,25 +64,31 @@
 - [ ] **futures WS 实盘验证**（L-08）：本机 `fstream.binance.com` 连得上但收不到消息，
       `markPrice` 流与 futures `aggTrade` 落库路径未跑通；需换网络环境补验
 - [ ] 第二数据源交叉校验：OI / Funding / 盘口目前只有 Binance 单源（PRD 28.2 第 8 项）
-- [ ] 接入 P3 衍生品异动规则：`DER_OI_SURGE` / `DER_OI_FLUSH` / `DER_FUNDING_EXTREME` /
+- [x] 接入 P3 衍生品异动规则：`DER_OI_SURGE` / `DER_OI_FLUSH` / `DER_FUNDING_EXTREME` /
       `DER_FUNDING_FLIP` / `DER_BASIS_EXTREME` / `DER_LS_SKEW` / `DER_PRICE_OI_DIVERGENCE`
-      （阈值已在 `config/base.toml` 备好，但无代码读取，见 L-07）
+      （见 P3 章节与 L-07）
 
 ## P3：异动检测（Phase 2.5）
 
 - [ ] 核对 PRD 22.2 约 40 条规则，补齐 MVP 要求的价格、成交量、衍生品核心规则
-- [ ] 衍生品类规则接入 P2 数据后启用（阈值已在 `config/base.toml` 的
-      `[anomaly.rules.derivatives]` 备好，但当前无代码读取，见 L-07）
+- [x] **异动规则配置链路**（L-07）：新增 `config/anomaly_rules.py`，
+      `config/base.toml` 的 `[anomaly.rules.*]` 各段**首次被真正读取**
+      （此前改配置不改变行为）。类型错误必须报错，不静默回落 0
+- [x] **衍生品类规则族**（L-07）：新增 `domain/anomaly/derivatives_rules.py`，
+      实现 PRD 22.2.4 的 8 条 `DER_*` 规则；
+      引擎新增 `DerivativesInputs`，`anomaly_scan` 新增 `load_derivatives_inputs()`。
+      **缺失数据一律 skipped，绝不当作 0**
 - [x] `DER_FUNDING_EXTREME` 的 WS 预估费率通道（L-05）：
       新增 `services/funding_current.py`，采集器把 `markPrice` 的当前预估费率
       写入 Redis（键 `market:funding_current:{market_type}:{symbol}`，
       TTL 360s > 陈旧阈值 120s），异动引擎可读取。
       **不写 `funding_history`**——已结算事实不可改写；
       键缺失 = 数据缺失（标记 skipped），不得当作费率为 0
-- [ ] `DER_LS_SKEW` / `DER_PRICE_OI_DIVERGENCE` 的规则实现（L-07）：
-      输入已就绪（L-06 已接入真实价格变化率与 OI 变化率），
-      但异动引擎尚无 `DER_*` 规则族
-- [ ] 显式禁用依赖 1m 的规则，并在配置中留痕
+- [x] `DER_LS_SKEW` / `DER_PRICE_OI_DIVERGENCE` 的规则实现（L-07）：
+      多空比用「资金费率符号 + OI 变化」的联合标量做保守推断
+      （Binance `globalLongShortAccountRatio` 未采集，不可直接观测）
+- [x] 显式禁用依赖 1m 的规则，并在配置中留痕
+      （`base.toml` 的 `disabled_rules` 现已被读取并生效）
 - [ ] 异动阈值用 2–4 周历史数据回放校准（PRD 28.2 第 4 项）
 - [ ] 每条规则的历史触发频率与后续方向性统计（PRD 28.2 第 5 项）
 - [ ] 异动后表现评估与规则版本化、降权机制（PRD 17）
