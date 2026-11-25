@@ -8,6 +8,10 @@
 >
 > **遗留问题（已确认存在但未修复）单独记录在 [`docs/遗留问题.md`](遗留问题.md)**，
 > 本清单只列任务级待办。
+>
+> **下一步执行顺序与依据见 [`docs/下一步开发计划.md`](下一步开发计划.md)**——
+> 那是基于**代码实际状态**（而非本清单的勾选状态）的盘点结论，
+> 含「本清单标未做、实际已实现」的更正，以及待建表清单。
 
 ## P0：工程底座（先做）
 
@@ -203,6 +207,11 @@
 - [ ] Evidence Aggregator 合并证据并标注冲突
 - [ ] Master Agent 综合，区分事实、推断与待验证假设
 - [ ] 基于 `langgraph` 编排（依赖已声明但未使用）
+      ——`pyproject.toml` 声明了 `langgraph>=0.2`，**全仓零 import**。
+      **先决定再动手**：PRD 24.4 描述的是「LangGraph 状态图」，
+      但用**显式 fan-out/fan-in 代码**落地更简单可控。
+      若最终不用它，就**从 `pyproject.toml` 删掉**——
+      留一个永远不用的依赖，正是「声明未消费」的第 9 次。
 - [ ] 每次 Agent 调用写 `agent_runs` 与 `agent_outputs`，记录输入快照引用、耗时、token
       ——**表已就位且 `model_runs` 已接通**，`agent_runs` / `agent_outputs`
       仍待多 Agent 拆分后写入
@@ -264,10 +273,23 @@
       档位落在 `llm_cost_records.tier`（通过 `model_run_id` 关联）。
 
 **证据与校验（PRD 4.7.3）**
-- [ ] 程序校验 `source_path` 指向的值与快照一致
-- [ ] 校验引用是否指向本次 `snapshot_id`
-- [ ] 情景概率互斥与归一化校验
-- [ ] 数值、时间、结构化条件的程序校验
+> **2026-11-25 盘点更正**：以下 4 项此前标为未做，
+> 但**代码里早已实现**——TODO 与实现脱节了（记为 L-26）。
+> 教训：**清单是给人看的，代码才是事实**。
+> 更新状态前必须 grep 实现，不能凭印象改。
+- [x] 程序校验 `source_path` 指向的值与快照一致
+      ——已在 `services/analysis.py::create_report`：
+      按 `source_path` 逐段解析快照 `content`，
+      路径解析不了抛 `LLM_SCHEMA_INVALID`，
+      值不一致抛 `EVAL_LOOKAHEAD_VIOLATION`
+- [x] 校验引用是否指向本次 `snapshot_id`
+      ——同处：`evidence.snapshot_id != market_snapshot_id` 即拒绝
+- [x] 情景概率互斥与归一化校验
+      ——`domain/analysis/report.py::ScenarioProbability`：
+      `up/down/flat` 各在 `[0,1]`，总和与 1 的偏差 > `1e-6` 即报错
+- [x] 数值、时间、结构化条件的程序校验
+      ——同处：`observed_at` / `available_at` 超出快照时间边界
+      即抛 `EVAL_LOOKAHEAD_VIOLATION`（前视偏差防护）
 
 **验收**
 - [ ] 建立固定场景内容验收集：趋势一致、震荡、多周期冲突、衍生品背离、数据缺失、Agent 超时、无明确机会
@@ -277,6 +299,15 @@
 ## P5：调度与运行层（Phase 3A，M3）
 
 - [ ] 接入 APScheduler（依赖已声明但未使用）
+      ——`pyproject.toml` 声明了 `apscheduler>=3.10`，**全仓零 import**
+      （与 L-19 / L-20 / L-21 同型的「声明未消费」，第 8 次）。
+      计划并入 P5 调度层落地
+- [ ] **依赖声明 vs 实际 import 对账进 CI**（L-26 的机制化对策）
+      ——「声明未消费」已累计出现 **9–10 次**
+      （L-03 / L-07a / L-16 / L-18 / L-19 / L-20 / L-21 / L-23 / L-26），
+      **不能再靠人记得查**。加一条 CI 检查：
+      `pyproject.toml` 里声明的依赖必须至少被一处 import，
+      零消费的依赖直接报错（或显式列入白名单并说明原因）。
 - [ ] 建立 `scheduled_jobs`、`job_runs`、`job_locks` 表与迁移（PRD 23.3）
 - [ ] 定时综合分析（1h）与日报复盘
 - [ ] 异动触发完整分析流程（PRD 22.6）
