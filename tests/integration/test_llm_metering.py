@@ -184,7 +184,13 @@ def test_cost_without_pricing_is_flagged_not_zero(db_env: Session, settings: Set
 
 
 def test_failed_call_still_recorded(db_env: Session, settings: Settings) -> None:
-    """失败调用也消耗 token，必须记入 model_runs —— 否则成本系统性低估。"""
+    """失败调用也消耗 token，必须记入 model_runs —— 否则成本系统性低估。
+
+    这里用 ``LLM_MAX_RETRIES=0`` 关掉重试：500 是**可重试**错误，
+    默认配置下会被重试 ``LLM_MAX_RETRIES`` 次，每次尝试都要记账。
+    重试语义由 ``test_retry_*`` 系列单独覆盖。
+    """
+    settings.LLM_MAX_RETRIES = 0
     original_client = httpx.Client
 
     def patched_client(*args, **kwargs):
@@ -209,7 +215,13 @@ def test_failed_call_still_recorded(db_env: Session, settings: Settings) -> None
 
 
 def test_schema_invalid_call_recorded(db_env: Session, settings: Settings) -> None:
-    """schema 校验失败必须记为 SCHEMA_INVALID（model_runs 的 CHECK 枚举内）。"""
+    """schema 校验失败必须记为 SCHEMA_INVALID（model_runs 的 CHECK 枚举内）。
+
+    这里同时关掉重试与 schema 修复：修复会多发一次请求，
+    多写一行 ``model_runs``。修复语义由 ``test_retry_*`` 系列单独覆盖。
+    """
+    settings.LLM_MAX_RETRIES = 0
+    settings.LLM_SCHEMA_REPAIR_ATTEMPTS = 0
     payload = {
         "choices": [{"finish_reason": "stop", "message": {"content": "not-json"}}],
         "usage": {"prompt_tokens": 100, "completion_tokens": 10},

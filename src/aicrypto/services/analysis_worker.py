@@ -14,6 +14,7 @@ token 数只有供应商知道，**事后无法补**。因此计量必须发生�
 
 from __future__ import annotations
 
+import datetime as dt
 import json
 import time
 import uuid
@@ -46,7 +47,9 @@ from aicrypto.domain.market.structure import (
     sr_zones,
     summarize_structure,
 )
+from aicrypto.infrastructure import metrics
 from aicrypto.infrastructure.database.models.analysis import (
+    AgentRun,
     LLMCostRecord,
     MarketSnapshotRecord,
     ModelRun,
@@ -59,6 +62,17 @@ from aicrypto.infrastructure.logging import configure_logging, get_logger
 from aicrypto.services.analysis import create_report
 from aicrypto.services.derivatives_snapshot import build_derivatives_snapshot
 from aicrypto.services.llm_cost import PricingEntry, estimate_cost, resolve_pricing
+from aicrypto.services.llm_retry import (
+    AttemptOutcome,
+    RetryPolicy,
+    build_input_limit_error,
+    build_repair_messages,
+    classify_http_status,
+    exceeds_input_token_limit,
+    is_retryable_error,
+    should_retry,
+    summarize_validation_issues,
+)
 from aicrypto.services.market import candle_payload
 
 logger = get_logger(__name__)
@@ -432,7 +446,66 @@ def record_model_run(
             is_degraded=False,
         )
     )
+    _publish_metrics(
+        model_id=model_id,
+        tier=tier,
+        agent_name=agent_name,
+        status=status,
+        input_tokens=input_tokens,
+        output_tokens=output_tokens,
+        latency_ms=latency_ms,
+        cost_usd=estimate.cost_usd,
+    )
     return model_run_id
+
+
+def _publish_metrics(
+    *,
+    model_id: str,
+    tier: str | None,
+    agent_name: str | None,
+    status: str,
+    input_tokens: int,
+    output_tokens: int,
+    latency_ms: int,
+    cost_usd: Decimal | None,
+) -> None:
+    """把一次调用同步到 Prometheus 指标。
+
+    **这些指标此前定义了却无人写入**（与 L-16 同型的「声明未消费」）：
+    ``llm_requests_total`` / ``llm_latency_ms`` / ``llm_tokens_total`` /
+    ``llm_cost_usd_total`` / ``llm_daily_cost_usd`` /
+    ``llm_schema_invalid_total`` 全都只有定义、没有调用方。
+
+    指标与数据库是**两条独立的观测通道**：
+    数据库是审计用的权威记录（可回溯、可对账），指标是运维用的实时信号
+    （可告警、可画图）。缺了指标，线上费用突增只能等月底对账才发现。
+
+    指标写失败**绝不能让分析任务失败**——观测通道不能影响业务通道。
+    """
+    agent_label = agent_name or "unknown"
+    tier_label = tier or "unknown"
+    try:
+        metrics.llm_requests_total.labels(
+            model_id=model_id,
+            tier=tier_label,
+            agent=agent_label,
+            status=status,
+        ).inc()
+        metrics.llm_latency_ms.labels(model_id=model_id, tier=tier_label).observe(latency_ms)
+        if input_tokens:
+            metrics.llm_tokens_total.labels(model_id=model_id, direction="in").inc(input_tokens)
+        if output_tokens:
+            metrics.llm_tokens_total.labels(model_id=model_id, direction="out").inc(output_tokens)
+        if cost_usd is not None:
+            metrics.llm_cost_usd_total.labels(model_id=model_id, tier=tier_label).inc(
+                float(cost_usd)
+            )
+            metrics.llm_daily_cost_usd.set(float(cost_usd))
+        if status == "SCHEMA_INVALID":
+            metrics.llm_schema_invalid_total.labels(agent=agent_label).inc()
+    except Exception:  # 观测通道不得影响业务通道
+        logger.warning("llm_metrics_publish_failed", model_id=model_id, status=status)
 
 
 def _relative_template_path(path: Path) -> str:
@@ -513,11 +586,105 @@ def build_messages(
     ]
 
 
+def _estimate_input_tokens(payload: dict[str, Any]) -> int:
+    """粗估一次请求的**输入** token 数。
+
+    精确值要等模型回包才知道，那时钱已经花了——所以护栏必须**事前**拦。
+    这里用「请求体字符数 / 4」估算：对中英混排的 JSON，这个系数是
+    行业常用的保守近似（英文约 4 字符/token，中文更少，所以偏高估，
+    正好符合「宁可拦早不要拦晚」的护栏语义）。
+
+    宁可**高估**也不低估：低估会让超长请求发出去，
+    在阶梯计价下把成本放大好几倍（成本优化 O11）。
+    """
+    body = json.dumps(payload, ensure_ascii=False)
+    return len(body) // 4 + 1
+
+
+def _post_once(
+    *,
+    client: httpx.Client,
+    base: str,
+    headers: dict[str, str],
+    payload: dict[str, Any],
+) -> httpx.Response:
+    """发出一次请求。
+
+    单独抽出来是为了让「重试循环」只管循环，不管请求细节。
+    """
+    return client.post(
+        f"{base.rstrip('/')}/chat/completions",
+        headers=headers,
+        json=payload,
+    )
+
+
+def _extract_output(response: httpx.Response) -> tuple[str | None, AttemptOutcome]:
+    """从响应里取出模型输出文本，并判定结果分类。
+
+    返回 ``(输出文本, 分类)``。输出为 ``None`` 表示拿不到文本
+    （HTTP 失败或响应结构异常），此时分类已经说明了原因。
+    """
+    if not response.is_success:
+        return None, classify_http_status(response.status_code)
+    try:
+        choice = response.json()["choices"][0]
+    except (KeyError, IndexError, TypeError, ValueError):
+        return None, AttemptOutcome.SCHEMA_INVALID
+    if choice.get("finish_reason") == "length":
+        # 输出被截断：重试同样的请求大概率还是被截断（同样的 max_tokens），
+        # 但仍归为 SCHEMA_INVALID 之外的一类，让调用方明确知道原因。
+        return None, AttemptOutcome.TRUNCATED
+    try:
+        content = choice["message"]["content"]
+    except (KeyError, TypeError):
+        return None, AttemptOutcome.SCHEMA_INVALID
+    if not isinstance(content, str):
+        return None, AttemptOutcome.SCHEMA_INVALID
+    return content, AttemptOutcome.SUCCESS
+
+
+def _record_attempt(
+    db: Any,
+    *,
+    provider: str,
+    model: str,
+    prompt_version: str,
+    status: str,
+    input_tokens: int,
+    output_tokens: int,
+    latency_ms: int,
+    retry_count: int,
+    error: dict[str, Any] | None,
+) -> None:
+    """记录一次 HTTP 尝试。
+
+    **每一次实际发出的请求都写一行**——包括失败与被重试掉的那些。
+    失败的尝试同样消耗 token，同样要计费；漏记会让成本报表系统性低估。
+    """
+    record_model_run(
+        db,
+        provider=provider,
+        model_id=model,
+        prompt_version=prompt_version,
+        status=status,
+        input_tokens=input_tokens,
+        output_tokens=output_tokens,
+        latency_ms=latency_ms,
+        retry_count=retry_count,
+        error=error,
+        agent_name=PROMPT_AGENT_NAME,
+        tier="TIER_STANDARD",
+        pricing=resolve_pricing(db, model_id=model, as_of=now()),
+    )
+
+
 def generate_report(
     snapshot: dict[str, Any],
     settings: Settings,
     *,
     db: Any,
+    deadline: dt.datetime | None = None,
 ) -> tuple[AnalysisReportContent, str, str]:
     """调用模型生成报告。
 
@@ -528,6 +695,16 @@ def generate_report(
 
     失败路径同样要写 ``model_runs``——失败调用也消耗 token，
     也要计入成本；漏记会让成本报表系统性低估。
+
+    **重试与修复**（本函数负责的三件事）：
+
+    1. ``LLM_MAX_RETRIES``——只对**可重试**错误（429 / 5xx / 传输层）
+       退避重试；4xx 与 schema 失败不重试（重试只是白烧钱）。
+    2. ``LLM_SCHEMA_REPAIR_ATTEMPTS``——schema 校验失败时，把
+       **模型上一次的输出 + 错误摘要**回灌给模型修一次，
+       **不重传原始快照上下文**（PRD v2.3 / 成本优化 O12）。
+    3. ``LLM_MAX_INPUT_TOKENS``——发请求前拦截超长输入
+       （输入阶梯计价，超限会让成本成倍上涨，成本优化 O11）。
     """
     provider, model, base, secret = resolve_model_and_provider(settings)
     if not base or not model:
@@ -544,166 +721,306 @@ def generate_report(
         schema=schema,
     )
 
-    started = time.perf_counter()
-    try:
-        with httpx.Client(
-            timeout=min(settings.LLM_TIMEOUT_SECONDS, settings.LLM_ANALYSIS_TOTAL_BUDGET_SECONDS),
-            trust_env=settings.LLM_TRUST_ENV,
-        ) as client:
-            response = client.post(
-                f"{base.rstrip('/')}/chat/completions",
-                headers=headers,
-                json={
-                    "model": model,
-                    **(
-                        {"enable_thinking": settings.LLM_ENABLE_THINKING}
-                        if settings.LLM_ENABLE_THINKING is not None
-                        else {}
-                    ),
-                    "max_tokens": settings.LLM_MAX_OUTPUT_TOKENS,
-                    "response_format": {
-                        "type": "json_schema",
-                        "json_schema": {
-                            "name": "analysis_report",
-                            "schema": schema,
-                        },
-                    },
-                    "messages": messages,
-                },
-            )
-        latency_ms = int((time.perf_counter() - started) * 1000)
-        input_tokens, output_tokens = extract_usage(response)
+    policy = RetryPolicy(max_retries=settings.LLM_MAX_RETRIES)
+    repair_attempts = settings.LLM_SCHEMA_REPAIR_ATTEMPTS
+    input_limit = settings.LLM_MAX_INPUT_TOKENS
 
-        if not response.is_success:
-            record_model_run(
+    # ---- 第一次调用用的请求体 ----
+    payload: dict[str, Any] = {
+        "model": model,
+        **(
+            {"enable_thinking": settings.LLM_ENABLE_THINKING}
+            if settings.LLM_ENABLE_THINKING is not None
+            else {}
+        ),
+        "max_tokens": settings.LLM_MAX_OUTPUT_TOKENS,
+        "response_format": {
+            "type": "json_schema",
+            "json_schema": {
+                "name": "analysis_report",
+                "schema": schema,
+            },
+        },
+        "messages": messages,
+    }
+
+    # 输入 token 护栏：用「估算的请求体字符数 / 4」做粗估。
+    # 精确 token 数要等模型回包才知道，那时钱已经花了。
+    # 估算偏保守（真实 token 数通常 <= 字符数/4 的量级）。
+    estimated_input = _estimate_input_tokens(payload)
+    if exceeds_input_token_limit(input_tokens=estimated_input, limit=input_limit):
+        raise build_input_limit_error(actual=estimated_input, limit=input_limit)
+
+    timeout = min(settings.LLM_TIMEOUT_SECONDS, settings.LLM_ANALYSIS_TOTAL_BUDGET_SECONDS)
+
+    # ---- 重试循环 ----
+    attempt = 0
+    repair_used = 0
+    last_error: AICryptoError | None = None
+
+    while True:
+        attempt += 1
+        started = time.perf_counter()
+        try:
+            with httpx.Client(timeout=timeout, trust_env=settings.LLM_TRUST_ENV) as client:
+                response = _post_once(
+                    client=client,
+                    base=base,
+                    headers=headers,
+                    payload=payload,
+                )
+        except httpx.RequestError as exc:
+            latency_ms = int((time.perf_counter() - started) * 1000)
+            retryable = is_retryable_error(exc)
+            _record_attempt(
                 db,
                 provider=provider,
-                model_id=model,
+                model=model,
                 prompt_version=system_template.version,
                 status="FAILED",
-                input_tokens=input_tokens,
-                output_tokens=output_tokens,
+                input_tokens=0,
+                output_tokens=0,
                 latency_ms=latency_ms,
-                retry_count=0,
-                error={"stage": "provider_http", "http_status": response.status_code},
-                agent_name=PROMPT_AGENT_NAME,
-                tier="TIER_STANDARD",
-                pricing=resolve_pricing(db, model_id=model, as_of=now()),
+                retry_count=attempt - 1,
+                error={
+                    "stage": "transport",
+                    "error_type": type(exc).__name__,
+                    "retryable": retryable,
+                },
+            )
+            if retryable and should_retry(
+                outcome=AttemptOutcome.RETRYABLE,
+                attempt=attempt,
+                policy=policy,
+                deadline=deadline,
+            ):
+                time.sleep(policy.backoff_seconds(attempt))
+                continue
+            code = (
+                ErrorCode.LLM_TIMEOUT
+                if isinstance(exc, httpx.TimeoutException)
+                else ErrorCode.LLM_UNAVAILABLE
             )
             raise AICryptoError(
-                ErrorCode.LLM_UNAVAILABLE,
-                details={"stage": "provider_http", "http_status": response.status_code},
-            )
-        try:
-            choice = response.json()["choices"][0]
-            if choice.get("finish_reason") == "length":
-                record_model_run(
+                code,
+                details={"stage": "transport", "error_type": type(exc).__name__},
+            ) from exc
+
+        latency_ms = int((time.perf_counter() - started) * 1000)
+        input_tokens, output_tokens = extract_usage(response)
+        output, outcome = _extract_output(response)
+
+        if outcome is AttemptOutcome.SUCCESS:
+            assert output is not None  # 类型收窄，非运行时断言
+            try:
+                content = parse_report_content(output)
+            except ValidationError as exc:
+                issues = [
+                    {"loc": list(item["loc"]), "type": item["type"]}
+                    for item in exc.errors(include_input=False, include_context=False)[:12]
+                ]
+                _record_attempt(
                     db,
                     provider=provider,
-                    model_id=model,
+                    model=model,
                     prompt_version=system_template.version,
                     status="SCHEMA_INVALID",
                     input_tokens=input_tokens,
                     output_tokens=output_tokens,
                     latency_ms=latency_ms,
-                    retry_count=0,
-                    error={"stage": "output_truncated"},
-                    agent_name=PROMPT_AGENT_NAME,
-                    tier="TIER_STANDARD",
-                    pricing=resolve_pricing(db, model_id=model, as_of=now()),
+                    retry_count=attempt - 1,
+                    error={"stage": "output_validation", "issues": issues},
                 )
-                raise AICryptoError(
-                    ErrorCode.LLM_SCHEMA_INVALID, details={"stage": "output_truncated"}
+                last_error = AICryptoError(
+                    ErrorCode.LLM_SCHEMA_INVALID,
+                    details={"stage": "output_validation", "issues": issues},
                 )
-            content = parse_report_content(choice["message"]["content"])
-        except ValidationError as exc:
-            record_model_run(
-                db,
-                provider=provider,
-                model_id=model,
-                prompt_version=system_template.version,
-                status="SCHEMA_INVALID",
-                input_tokens=input_tokens,
-                output_tokens=output_tokens,
-                latency_ms=latency_ms,
-                retry_count=0,
-                error={
-                    "stage": "output_validation",
-                    "issues": [
-                        {"loc": list(item["loc"]), "type": item["type"]}
-                        for item in exc.errors(include_input=False, include_context=False)[:12]
-                    ],
-                },
-                agent_name=PROMPT_AGENT_NAME,
-                tier="TIER_STANDARD",
-                pricing=resolve_pricing(db, model_id=model, as_of=now()),
-            )
-            raise AICryptoError(
-                ErrorCode.LLM_SCHEMA_INVALID,
-                details={
-                    "stage": "output_validation",
-                    "issues": [
-                        {"loc": list(item["loc"]), "type": item["type"]}
-                        for item in exc.errors(include_input=False, include_context=False)[:12]
-                    ],
-                },
-            ) from exc
-        except (KeyError, IndexError, TypeError, ValueError) as exc:
-            record_model_run(
-                db,
-                provider=provider,
-                model_id=model,
-                prompt_version=system_template.version,
-                status="SCHEMA_INVALID",
-                input_tokens=input_tokens,
-                output_tokens=output_tokens,
-                latency_ms=latency_ms,
-                retry_count=0,
-                error={"stage": "response_envelope"},
-                agent_name=PROMPT_AGENT_NAME,
-                tier="TIER_STANDARD",
-                pricing=resolve_pricing(db, model_id=model, as_of=now()),
-            )
-            raise AICryptoError(
-                ErrorCode.LLM_SCHEMA_INVALID, details={"stage": "response_envelope"}
-            ) from exc
+                # 走「schema 修复」分支
+                if repair_used < repair_attempts:
+                    repair_used += 1
+                    payload = {
+                        **payload,
+                        "messages": build_repair_messages(
+                            system_template_content=system_template.content,
+                            original_output=output,
+                            error_summary=summarize_validation_issues(issues),
+                        ),
+                    }
+                    continue
+                raise last_error from exc
+            except (KeyError, IndexError, TypeError, ValueError) as exc:
+                _record_attempt(
+                    db,
+                    provider=provider,
+                    model=model,
+                    prompt_version=system_template.version,
+                    status="SCHEMA_INVALID",
+                    input_tokens=input_tokens,
+                    output_tokens=output_tokens,
+                    latency_ms=latency_ms,
+                    retry_count=attempt - 1,
+                    error={"stage": "response_envelope"},
+                )
+                last_error = AICryptoError(
+                    ErrorCode.LLM_SCHEMA_INVALID, details={"stage": "response_envelope"}
+                )
+                if repair_used < repair_attempts:
+                    repair_used += 1
+                    payload = {
+                        **payload,
+                        "messages": build_repair_messages(
+                            system_template_content=system_template.content,
+                            original_output=output,
+                            error_summary="输出不是合法的 JSON 对象",
+                        ),
+                    }
+                    continue
+                raise last_error from exc
 
-        record_model_run(
+            # 成功
+            _record_attempt(
+                db,
+                provider=provider,
+                model=model,
+                prompt_version=system_template.version,
+                status="SUCCESS",
+                input_tokens=input_tokens,
+                output_tokens=output_tokens,
+                latency_ms=latency_ms,
+                retry_count=attempt - 1,
+                error=None,
+            )
+            register_prompt_version(db, template=system_template, change_note="初始版本")
+            register_prompt_version(db, template=user_template, change_note="初始版本")
+            return content, model, system_template.version
+
+        # ---- 非成功：按分类处理 ----
+        if outcome is AttemptOutcome.TRUNCATED:
+            _record_attempt(
+                db,
+                provider=provider,
+                model=model,
+                prompt_version=system_template.version,
+                status="SCHEMA_INVALID",
+                input_tokens=input_tokens,
+                output_tokens=output_tokens,
+                latency_ms=latency_ms,
+                retry_count=attempt - 1,
+                error={"stage": "output_truncated"},
+            )
+            raise AICryptoError(
+                ErrorCode.LLM_SCHEMA_INVALID, details={"stage": "output_truncated"}
+            )
+
+        if outcome is AttemptOutcome.RETRYABLE:
+            status = "RATE_LIMITED" if response.status_code == 429 else "FAILED"
+            _record_attempt(
+                db,
+                provider=provider,
+                model=model,
+                prompt_version=system_template.version,
+                status=status,
+                input_tokens=input_tokens,
+                output_tokens=output_tokens,
+                latency_ms=latency_ms,
+                retry_count=attempt - 1,
+                error={"stage": "provider_http", "http_status": response.status_code},
+            )
+            if should_retry(
+                outcome=outcome,
+                attempt=attempt,
+                policy=policy,
+                deadline=deadline,
+            ):
+                time.sleep(policy.backoff_seconds(attempt))
+                continue
+            code = (
+                ErrorCode.LLM_RATE_LIMITED
+                if response.status_code == 429
+                else ErrorCode.LLM_UNAVAILABLE
+            )
+            raise AICryptoError(
+                code,
+                details={"stage": "provider_http", "http_status": response.status_code},
+            )
+
+        # FATAL：4xx，重试无意义
+        _record_attempt(
             db,
             provider=provider,
-            model_id=model,
+            model=model,
             prompt_version=system_template.version,
-            status="SUCCESS",
+            status="FAILED",
             input_tokens=input_tokens,
             output_tokens=output_tokens,
             latency_ms=latency_ms,
-            retry_count=0,
-            error=None,
-            agent_name=PROMPT_AGENT_NAME,
-            tier="TIER_STANDARD",
-            pricing=resolve_pricing(db, model_id=model, as_of=now()),
+            retry_count=attempt - 1,
+            error={"stage": "provider_http", "http_status": response.status_code},
         )
-        register_prompt_version(db, template=system_template, change_note="初始版本")
-        register_prompt_version(db, template=user_template, change_note="初始版本")
-        return content, model, system_template.version
-    except httpx.RequestError as exc:
-        latency_ms = int((time.perf_counter() - started) * 1000)
-        record_model_run(
-            db,
-            provider=provider,
-            model_id=model,
-            prompt_version=system_template.version,
+        if response.status_code == 400:
+            raise AICryptoError(
+                ErrorCode.LLM_CONTENT_REJECTED,
+                details={"stage": "provider_http", "http_status": response.status_code},
+            )
+        raise AICryptoError(
+            ErrorCode.LLM_UNAVAILABLE,
+            details={"stage": "provider_http", "http_status": response.status_code},
+        )
+
+
+def record_missing_agent(
+    db: Any,
+    *,
+    run_id: str,
+    analysis_id: str,
+    symbol: str,
+    market_type: str,
+    snapshot_id: str | None,
+    as_of: dt.datetime,
+    reason: str,
+    error: dict[str, Any] | None = None,
+    tier: str = "TIER_STANDARD",
+) -> str:
+    """登记「该 Agent 的输出缺失」，**绝不用伪造输出填补**（PRD 32.4）。
+
+    修复也失败时（``LLM_SCHEMA_REPAIR_ATTEMPTS`` 用尽仍不合 Schema），
+    正确的做法是**如实记录这个 Agent 缺失**，让下游知道：
+    这份结论缺少某个 Agent 的输入，而不是某个 Agent 给出了某个结论。
+
+    **为什么不能伪造**：一个编出来的 Agent 输出会被当成真实结论参与
+    汇总、进入报告、进入预测追踪。后面所有环节都无法再区分它是编的——
+    这比「缺一个 Agent」危险得多。
+
+    写入 ``agent_runs``（status=FAILED, degraded=True），
+    **不写** ``agent_outputs``——没有输出就没有输出行，
+    不能塞一个占位的空对象假装有输出。
+    """
+    agent_run_id = f"arun_{uuid.uuid4().hex}"
+    started = as_of
+    finished = now()
+    db.add(
+        AgentRun(
+            run_id=agent_run_id,
+            analysis_id=analysis_id,
+            agent_name=PROMPT_AGENT_NAME,
+            agent_version="v1",
+            model_id="",
+            prompt_version="",
+            market_snapshot_id=snapshot_id or "",
+            as_of=as_of,
+            time_horizon="4h",
             status="FAILED",
-            input_tokens=0,
-            output_tokens=0,
-            latency_ms=latency_ms,
-            retry_count=0,
-            error={"stage": "transport", "error_type": type(exc).__name__},
-            agent_name=PROMPT_AGENT_NAME,
-            tier="TIER_STANDARD",
-            pricing=resolve_pricing(db, model_id=model, as_of=now()),
+            tier=tier,
+            degraded=True,
+            degraded_reason=reason,
+            started_at=started,
+            finished_at=finished,
+            duration_ms=int((finished - started).total_seconds() * 1000),
+            input_ref={"run_id": run_id, "symbol": symbol, "market_type": market_type},
+            error=error,
         )
-        raise
+    )
+    return agent_run_id
 
 
 def process_one(settings: Settings) -> bool:
@@ -711,13 +1028,20 @@ def process_one(settings: Settings) -> bool:
     if run_id is None:
         return False
     started = time.monotonic()
+    # 整个任务的绝对截止时间。重试的退避等待必须落在它之内，
+    # 否则一次卡住的重试会把总预算吃光，任务整体超时，
+    # 还不如早点失败、把「已完成的部分」交出去。
+    deadline = now() + dt.timedelta(seconds=settings.LLM_ANALYSIS_TOTAL_BUDGET_SECONDS)
+    snapshot: dict[str, Any] | None = None
     try:
         snapshot = build_snapshot(run_id, settings)
         # 计量写入与报告创建在**同一个事务**里：成本记录引用 model_run_id，
         # 报告的 versions 引用 model_id / prompt_version，三者要么一起成功、
         # 要么一起回滚，不允许出现「有报告无成本」或「有成本无报告」。
         with session_scope(settings) as db:
-            content, model_id, prompt_version = generate_report(snapshot, settings, db=db)
+            content, model_id, prompt_version = generate_report(
+                snapshot, settings, db=db, deadline=deadline
+            )
             if time.monotonic() - started > settings.LLM_ANALYSIS_TOTAL_BUDGET_SECONDS:
                 raise TimeoutError("分析任务超过总时限")
             create_report(
@@ -741,6 +1065,10 @@ def process_one(settings: Settings) -> bool:
             code = ErrorCode.LLM_UNAVAILABLE
         if isinstance(exc, (httpx.TimeoutException, TimeoutError)):
             code, status = ErrorCode.LLM_TIMEOUT, "TIMEOUT"
+        if isinstance(exc, AICryptoError) and exc.code == ErrorCode.LLM_SCHEMA_INVALID:
+            # **修复也失败**：该 Agent 的输出视为缺失，绝不伪造（PRD 32.4）。
+            # 报告不会生成——宁可没有结论，也不要一个编出来的结论。
+            status = "FAILED"
         with session_scope(settings) as db:
             db.execute(
                 update(AnalysisRunRecord)
@@ -758,6 +1086,32 @@ def process_one(settings: Settings) -> bool:
                     },
                 )
             )
+            # **修复也失败**（Schema 仍不合法）：如实登记「Agent 缺失」，
+            # 绝不伪造一份输出顶上去（PRD 32.4）。
+            if (
+                isinstance(exc, AICryptoError)
+                and exc.code == ErrorCode.LLM_SCHEMA_INVALID
+                and snapshot is not None
+            ):
+                run_row = db.get(AnalysisRunRecord, run_id)
+                if run_row is not None:
+                    record_missing_agent(
+                        db,
+                        run_id=run_id,
+                        analysis_id=run_row.analysis_id,
+                        symbol=run_row.symbol,
+                        market_type=run_row.market_type,
+                        snapshot_id=snapshot.get("snapshot_id"),
+                        as_of=now(),
+                        reason=(
+                            "模型输出经修复后仍不符合 Schema，"
+                            f"已重试 {settings.LLM_SCHEMA_REPAIR_ATTEMPTS} 次修复"
+                        ),
+                        error={
+                            "code": str(code),
+                            "details": exc.details,
+                        },
+                    )
         logger.warning("analysis_failed", run_id=run_id, code=str(code))
     return True
 

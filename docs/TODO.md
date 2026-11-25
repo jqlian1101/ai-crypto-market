@@ -119,17 +119,46 @@
       必须报错并递增版本号）。
       回归测试：`tests/unit/test_model_pricing_config.py`（17 项）
       + `tests/integration/test_model_pricing_sync.py`（9 项，真库）
-- [ ] 校验单次输入 token 上限 `LLM_MAX_INPUT_TOKENS`（计量校验，非预算控制）
-- [ ] 写入 `llm_daily_cost_usd` 指标数据，仅用于观测
+- [x] 校验单次输入 token 上限 `LLM_MAX_INPUT_TOKENS`（计量校验，非预算控制）
+      ——新增 `services/llm_retry.py` 的护栏；**发请求前**用
+      「请求体字符数 / 4」粗估并拦截，超限抛 `LLM_BUDGET_EXCEEDED`。
+      事前拦截是必须的：输入阶梯计价（>100K 时单价 ×5，成本优化 O11），
+      等模型回包才知道就晚了——钱已经花了。
+      回归测试：`tests/unit/test_llm_retry.py` + `tests/integration/test_llm_retry.py`
+- [x] 写入 `llm_daily_cost_usd` 指标数据，仅用于观测
+      ——**发现并接入**：6 个 LLM 指标（`llm_requests_total` /
+      `llm_latency_ms` / `llm_tokens_total` / `llm_cost_usd_total` /
+      `llm_daily_cost_usd` / `llm_schema_invalid_total`）**定义了却无人写入**，
+      与 L-03 同源的「声明未消费」。现由 `record_model_run` 统一发布。
+      指标写失败**绝不影响分析任务**——观测通道不能影响业务通道。
+      回归测试：`tests/integration/test_llm_metrics.py`（4 项，真库）
 - [ ] 成本分析报表：按模型、Agent、Prompt 版本聚合 token 与费用
       ——**数据源已就绪**（`model_runs` / `llm_cost_records` 已有真实数据）
 
 **重试与修复**
-- [ ] 实现 `LLM_MAX_RETRIES` 重试循环（退避，仅对可重试错误）
-      ——`model_runs.retry_count` 字段已就位，但重试循环尚未实现，
-      当前 `retry_count` 恒为 0
-- [ ] 实现 `LLM_SCHEMA_REPAIR_ATTEMPTS`：校验失败时将错误回灌模型修复一次
-- [ ] 修复仍失败时标记该 Agent 缺失，禁止伪造输出（PRD 32.4）
+- [x] 实现 `LLM_MAX_RETRIES` 重试循环（退避，仅对可重试错误）
+      ——新增 `services/llm_retry.py`；`retry_count` 不再恒为 0。
+      **只重试可重试错误**：429 / 5xx / 传输层错误可重试，
+      4xx 与 Schema 失败**不重试**（重试只是白烧钱）。
+      退避为指数退避（1s→2s→4s，封顶 30s），
+      且**必须落在 `LLM_ANALYSIS_TOTAL_BUDGET_SECONDS` 之内**——
+      总预算不够覆盖退避时直接放弃，否则一个卡住的任务会吃光 worker 预算。
+      **每一次实际发出的请求都写一行 `model_runs` + 一条 `llm_cost_records`**
+      （失败尝试同样消耗 token，漏记会让成本系统性低估）。
+      回归测试：`tests/unit/test_llm_retry.py`（46 项）
+      + `tests/integration/test_llm_retry.py`（14 项，真库）
+      + 真实 HTTP 端到端验证（16/16）
+- [x] 实现 `LLM_SCHEMA_REPAIR_ATTEMPTS`：校验失败时将错误回灌模型修复一次
+      ——**只回灌「模型上一次的输出 + 错误摘要」，不重传原始快照上下文**
+      （PRD v2.3 / 成本优化 O12）：重传快照会让每次 Schema 失败的成本
+      翻倍以上，且模型可能「重新分析一遍」给出不同结论，破坏可复现性。
+      提示词明确要求「只修正，不要重新分析、不要改变已有结论」。
+- [x] 修复仍失败时标记该 Agent 缺失，禁止伪造输出（PRD 32.4）
+      ——新增 `record_missing_agent`：写 `agent_runs`
+      （`status=FAILED`、`degraded=true`、`degraded_reason` 说明原因），
+      **不写 `agent_outputs`**——没有输出就没有输出行，
+      不能塞占位空对象假装有输出。一个编出来的输出会被当成真实结论
+      进入汇总、报告与预测追踪，后面所有环节都无法再区分它是编的。
 
 **Prompt 与版本**
 - [x] 将 Prompt 从 `analysis_worker.py` 外置到 `prompts/<agent>/<template>.v<n}.md`
