@@ -96,16 +96,31 @@ class QuotePoint:
 # --------------------------------------------------------------------------
 
 
-def oi_change_pct(points: Sequence[OpenInterestPoint], *, window_seconds: int) -> float | None:
+def oi_change_pct(
+    points: Sequence[OpenInterestPoint],
+    *,
+    window_seconds: int,
+    end_ts: dt.datetime | None = None,
+) -> float | None:
     """窗口内持仓量变化率（小数）。
 
     取窗口起点与终点两个采样点。样本不足（少于 2 个点）时返回 ``None``，
     **不返回 0**——0 会被误读为「持仓量没变」。
+
+    ``end_ts`` 指定窗口的**终点时刻**（含），默认为最新样本的时点。
+    历史分位计算需要按各历史时点分别取窗口，
+    否则会把「当前」的窗口套用到所有历史样本上。
     """
     if len(points) < 2 or window_seconds <= 0:
         return None
     ordered = sorted(points, key=lambda p: p.ts)
-    end = ordered[-1]
+    if end_ts is None:
+        end = ordered[-1]
+    else:
+        candidates = [p for p in ordered if p.ts <= end_ts]
+        if not candidates:
+            return None
+        end = candidates[-1]
     cutoff = end.ts - dt.timedelta(seconds=window_seconds)
     earlier = [p for p in ordered if p.ts <= cutoff]
     if not earlier:

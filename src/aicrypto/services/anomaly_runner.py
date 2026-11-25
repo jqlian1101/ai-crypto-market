@@ -21,7 +21,6 @@ from aicrypto.common.clock import now
 from aicrypto.config.anomaly_rules import load_anomaly_rule_config
 from aicrypto.config.market_symbols import resolve_market_symbols
 from aicrypto.config.settings import LockMode, Settings, get_settings
-from aicrypto.domain.anomaly.derivatives_rules import DerivativesThresholds
 from aicrypto.infrastructure import metrics
 from aicrypto.infrastructure.anomaly_state import load_last_fired
 from aicrypto.infrastructure.database.session import session_scope
@@ -30,6 +29,7 @@ from aicrypto.services.anomaly_scan import (
     ScanOutcome,
     ensure_rule_version,
     load_derivatives_inputs,
+    load_derivatives_thresholds,
     scan_symbol,
 )
 from aicrypto.services.notification_dispatch import deliver_pending_anomalies
@@ -81,15 +81,7 @@ async def _run_with_client(symbols: list[str], settings: Settings, redis: Redis)
             else list(DEFAULT_DISABLED_RULES)
         )
         # 阈值来自 base.toml（22.2）：配置化必须真的生效，不能只用硬编码默认值。
-        derivatives_thresholds = DerivativesThresholds(
-            oi_change_warn_pct=rule_config.derivatives.oi_change_warn_pct,
-            oi_change_critical_pct=rule_config.derivatives.oi_change_critical_pct,
-            funding_abs_warn=rule_config.derivatives.funding_abs_warn,
-            funding_abs_critical=rule_config.derivatives.funding_abs_critical,
-            divergence_pct=rule_config.derivatives.divergence_pct,
-            basis_percentile=rule_config.derivatives.basis_percentile,
-            ls_skew_percentile=rule_config.derivatives.ls_skew_percentile,
-        )
+        derivatives_thresholds = load_derivatives_thresholds()
         for symbol in symbols:
             # 冷却状态预取：决定本轮是否产生新事件（影响落库量），必须在扫描前读取。
             cooldown_keys = [f"{symbol}:{rule_id}" for rule_id in SEED_RULE_IDS]

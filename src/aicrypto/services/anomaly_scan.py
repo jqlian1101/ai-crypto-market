@@ -19,6 +19,7 @@ from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 
+from aicrypto.config.anomaly_rules import load_anomaly_rule_config
 from aicrypto.domain.anomaly.dedup import decide_delivery
 from aicrypto.domain.anomaly.derivatives_rules import DerivativesThresholds
 from aicrypto.domain.anomaly.engine import (
@@ -62,9 +63,10 @@ BASIS_HISTORY_SAMPLES = 100
 SKEW_LOOKBACK_SECONDS = 24 * 3600
 #: 多空拥挤判定用的 OI 变化率窗口（秒）。1h 与 22.2.4 一致。
 SKEW_OI_WINDOW_SECONDS = 3600
-#: OI 变化率超过此值（**百分数**）才确认多空方向。
+#: OI 变化率超过此值才确认多空方向（**小数**口径，与领域层
+#: ``oi_change_pct`` 一致；0.01 表示 +1%）。
 #: 低于此值说明持仓没有明显扩张，不足以判定「拥挤」。
-SKEW_OI_CONFIRM_PCT = 1.0
+SKEW_OI_CONFIRM_RATIO = 0.01
 
 
 @dataclass(frozen=True, slots=True)
@@ -335,7 +337,11 @@ def _basis_percentile(
             samples.append(abs(computed.basis_pct))
     if len(samples) < 2:
         return None
-    return percentile_of(samples, samples[-1])
+    # ``spot_rows`` 按 captured_at **降序**排列，因此 samples[0] 才是**最新**样本。
+    # 「当前值」必须取最新的那个——用 samples[-1] 会拿到最旧的样本，
+    # 导致分位算在历史值上而非当前值上（基差极端规则因此永远不触发）。
+    current = samples[0]
+    return percentile_of(samples, current)
 
 
 def percentile_of(samples: list[float], value: float) -> float:
@@ -407,13 +413,21 @@ def _load_skew_percentile(
     if len(funding_rows) < 2 or len(oi_rows) < 2:
         return None
     oi_points = [OpenInterestPoint(ts=row.ts, open_interest=row.open_interest) for row in oi_rows]
-    oi_change = oi_change_pct(oi_points, window_seconds=SKEW_OI_WINDOW_SECONDS)
     samples: list[float] = []
     for row in funding_rows:
-        samples.append(_skew_scalar(float(row.funding_rate), oi_change))
+        # 每个历史样本必须配**它自己那个时点**的 OI 变化率。
+        # 若套用当前的 OI 变化，所有历史样本的标量会相同，
+        # 分位恒为 0.5，``DER_LS_SKEW`` 永远不会触发。
+        historical_oi_change = oi_change_pct(
+            oi_points,
+            window_seconds=SKEW_OI_WINDOW_SECONDS,
+            end_ts=row.funding_time,
+        )
+        samples.append(_skew_scalar(float(row.funding_rate), historical_oi_change))
     if len(samples) < 2:
         return None
-    return percentile_of(samples, _skew_scalar(funding_rate, oi_change))
+    current_oi_change = oi_change_pct(oi_points, window_seconds=SKEW_OI_WINDOW_SECONDS)
+    return percentile_of(samples, _skew_scalar(funding_rate, current_oi_change))
 
 
 def _skew_scalar(funding_rate: float, oi_change: float | None) -> float:
@@ -421,12 +435,35 @@ def _skew_scalar(funding_rate: float, oi_change: float | None) -> float:
 
     正值 = 多头拥挤，负值 = 空头拥挤，0 = 中性。
     与领域层 ``long_short_skew`` 的判定保持一致。
+
+    **单位**：``oi_change`` 是**小数**（领域层 ``oi_change_pct`` 的返回口径，
+    0.3 表示 +30%）。阈值必须同口径——用百分数比较会让
+    0.3 < 1.0 恒成立，多空拥挤永远无法被确认。
     """
     if funding_rate == 0:
         return 0.0
-    if oi_change is not None and oi_change > SKEW_OI_CONFIRM_PCT:
+    if oi_change is not None and oi_change > SKEW_OI_CONFIRM_RATIO:
         return funding_rate
     return 0.0
+
+
+def load_derivatives_thresholds() -> DerivativesThresholds:
+    """从 ``base.toml`` 加载衍生品规则阈值。
+
+    这是「配置化」的唯一入口——规则阈值必须来自配置文件，
+    不能依赖调用方是否记得传参（否则会静默回落到硬编码默认值）。
+    """
+    config = load_anomaly_rule_config()
+    der = config.derivatives
+    return DerivativesThresholds(
+        oi_change_warn_pct=der.oi_change_warn_pct,
+        oi_change_critical_pct=der.oi_change_critical_pct,
+        funding_abs_warn=der.funding_abs_warn,
+        funding_abs_critical=der.funding_abs_critical,
+        divergence_pct=der.divergence_pct,
+        basis_percentile=der.basis_percentile,
+        ls_skew_percentile=der.ls_skew_percentile,
+    )
 
 
 def scan_symbol(
@@ -444,7 +481,13 @@ def scan_symbol(
 
     ``delivered_keys`` / ``last_fired_at`` 由调用方从 Redis 注入；本函数只做纯判定与写库。
     ``derivatives`` 为衍生品规则输入；``None`` 表示未加载，相关规则计入 skipped。
+
+    ``derivatives_thresholds`` 未显式传入时，**从 ``base.toml`` 加载**，
+    而不是回落到硬编码默认值——否则「改配置不生效」的问题会在
+    调用方忘记传参时静默复现（配置化是假的）。
     """
+    if derivatives_thresholds is None:
+        derivatives_thresholds = load_derivatives_thresholds()
     ensure_rule_version(db, now=cutoff)
     loaded = load_bar_windows(db, symbol=symbol, cutoff=cutoff)
     engine: EngineResult = run_engine(
