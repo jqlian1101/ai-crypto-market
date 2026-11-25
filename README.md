@@ -3,10 +3,11 @@
 个人自用的加密市场智能与分析平台。后端 FastAPI + PostgreSQL + Redis，前端 Next.js Dashboard。
 完整需求与验收标准见 [`PRD_TDD.md`](PRD_TDD.md)。
 
-当前状态：**Phase 0 底座 + Phase 1 行情采集 + Phase 2 衍生品采集已就绪** ——
+当前状态：**Phase 0 底座 + Phase 1 行情采集 + Phase 2 衍生品采集 + Phase 2.5 异动检测已就绪** ——
 配置体系、领域模型、错误码字典、指标埋点、统一响应契约、数据库迁移、
 前端 Dashboard 框架，以及 K 线 / 持仓量 / 资金费率 / 盘口 / 聚合成交的采集链路
-均可运行。AI 分析、异动推送、评估追踪按 PRD 第 20 章的 MVP 定义分阶段落地。
+与衍生品异动规则族均可运行。AI 分析的 Prompt 版本化与成本计量已接通；
+多 Agent 拆分、调度层与评估追踪按 PRD 第 20 章的 MVP 定义分阶段落地。
 
 > **采集进程**（两个，需分别启动）：
 >
@@ -17,6 +18,30 @@
 >
 > 持仓量没有 WebSocket 推送，只能 REST 轮询，因此**衍生品异动的检出延迟高于价格异动**
 > （PRD 29.2 / 29.4.3）。
+
+### Prompt 与成本计量
+
+分析 Prompt 已从代码外置到 `prompts/<agent>/<template>.v<n>.md`：
+
+| 路径 | 说明 |
+|---|---|
+| `prompts/master/analysis.v1.md` | 系统提示（含 `{schema}` 占位符） |
+| `prompts/master/analysis.user.v1.md` | 用户提示（含 `{snapshot}` 占位符） |
+
+- **版本号在文件名里**，不写在内容里——避免「改了内容忘了改版本号」的漂移；
+- 每次分析都会往 `model_runs` / `llm_cost_records` 写计量（token、延迟、费用），
+  并登记 `prompt_versions`（含文件哈希，可校验磁盘与库内是否一致）；
+- 报告的 `versions` 字段记录 `model_id` / `prompt_version` / `feature_version`。
+
+**模型单价**来自 `config/base.toml` 的 `[llm.model_pricing]` 段，
+需同步进 `model_pricing` 表才能参与计费：
+
+```bash
+python scripts/sync_model_pricing.py
+```
+
+调价时**必须递增 `--pricing-version`**——同版本号下单价变了会直接报错，
+避免历史成本的版本号指向新价格。
 
 ---
 
@@ -225,6 +250,7 @@ npm run dev
 | 行情补数 | `python scripts/backfill_market.py` |
 | K 线校验 | `python scripts/verify_market_candles.py` |
 | 异动规则回放 | `python scripts/replay_anomaly.py` |
+| 同步模型单价到 `model_pricing` 表 | `python scripts/sync_model_pricing.py` |
 
 ### 前端
 
@@ -267,8 +293,9 @@ AICryptoMarket/
 │       ├── services/        # 可由 API、任务与离线流程复用的应用用例
 │       └── infrastructure/  # 数据库（含 ORM 模型）、Redis、日志、指标
 ├── config/
-│   ├── base.toml            # 非敏感结构化配置（阈值、配额、cron）
+│   ├── base.toml            # 非敏感结构化配置（阈值、配额、cron、模型单价）
 │   └── catalog.toml         # 配置项目录（CI 校验与 Settings 一致）
+├── prompts/                # 分析 Prompt 模板（<agent>/<name>.v<n>.md）
 ├── migrations/              # Alembic
 ├── tests/
 │   ├── unit/                # 纯函数单测

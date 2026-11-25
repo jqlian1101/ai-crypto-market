@@ -1,8 +1,9 @@
 # AICryptoMarket 完整 TODO List
 
 > 状态说明：`[x]` 表示已实现**且有测试覆盖**；`[ ]` 表示未做或未验证。
-> 最近一次核对：P0 / P1 / P2 的主体已完成，后端测试 **551 passed / 0 skipped**
-> （已启动本地 Postgres 跑通全部集成测试；此前为 443 passed / 11 skipped）。
+> 最近一次核对（2026-11-25）：P0 / P1 / P2 / P3 主体已完成，
+> 后端测试 **793 passed / 0 skipped**（本地 Postgres 16 + Redis 7 跑通全部集成测试）。
+> P4 已完成「Prompt 外置 + 模型调用计量 + 单价表接入」，多 Agent 拆分待做。
 >
 > **遗留问题（已确认存在但未修复）单独记录在 [`docs/遗留问题.md`](遗留问题.md)**，
 > 本清单只列任务级待办。
@@ -102,21 +103,48 @@
 ## P4：LLM 与 AI 分析（Phase 3，M2）
 
 **成本分析（仅记录与分析，暂不做成本优化）**
-- [ ] 实现 `llm_cost_records` 写入：模型、Agent、输入输出 token、估算费用、耗时
-- [ ] 建立 `model_pricing` 单价表，记录 `pricing_version`
+- [x] 实现 `llm_cost_records` 写入：模型、Agent、输入输出 token、估算费用、耗时
+      ——`analysis_worker.py` 在**收到响应的当下**捕获用量并落库；
+      失败调用同样记录（失败也消耗 token，漏记会让成本系统性低估）。
+      单价缺失时 `estimated_cost_usd` 记 0 且 `price_snapshot.priced=false`
+      **显式标记「未定价」**，绝不静默按 0 计费。
+      回归测试：`tests/integration/test_llm_metering.py`（7 项，真库）
+- [x] 建立 `model_pricing` 单价表，记录 `pricing_version`
+      ——新增迁移 `0006_model_pricing`；单价主键为 `(model_id, pricing_version)`，
+      改价新增版本行而非原地覆盖。
+      **发现并接入**：``base.toml`` 的 ``[llm.model_pricing]`` 段**早已存在**
+      （claude-haiku / sonnet / opus 真实单价）却**从未被任何代码读取**——
+      与 L-03 同源的「声明未消费」。现已由 `config/model_pricing.py` 读取，
+      经 `scripts/sync_model_pricing.py` 同步进表（幂等；同版本号下单价变了
+      必须报错并递增版本号）。
+      回归测试：`tests/unit/test_model_pricing_config.py`（17 项）
+      + `tests/integration/test_model_pricing_sync.py`（9 项，真库）
 - [ ] 校验单次输入 token 上限 `LLM_MAX_INPUT_TOKENS`（计量校验，非预算控制）
 - [ ] 写入 `llm_daily_cost_usd` 指标数据，仅用于观测
 - [ ] 成本分析报表：按模型、Agent、Prompt 版本聚合 token 与费用
+      ——**数据源已就绪**（`model_runs` / `llm_cost_records` 已有真实数据）
 
 **重试与修复**
 - [ ] 实现 `LLM_MAX_RETRIES` 重试循环（退避，仅对可重试错误）
+      ——`model_runs.retry_count` 字段已就位，但重试循环尚未实现，
+      当前 `retry_count` 恒为 0
 - [ ] 实现 `LLM_SCHEMA_REPAIR_ATTEMPTS`：校验失败时将错误回灌模型修复一次
 - [ ] 修复仍失败时标记该 Agent 缺失，禁止伪造输出（PRD 32.4）
 
 **Prompt 与版本**
-- [ ] 将 Prompt 从 `analysis_worker.py` 外置到 `prompts/<agent>/<template>.v{n}.md`
-- [ ] 写入 `prompt_versions`（版本、哈希、变更说明）
-- [ ] 输出携带 `model_id`、`prompt_version`、`agent_version`
+- [x] 将 Prompt 从 `analysis_worker.py` 外置到 `prompts/<agent>/<template>.v<n}.md`
+      ——新增 `config/prompts.py` 加载器；版本号从**文件名**解析
+      （不写在内容里，避免「改了内容忘了改版本号」的漂移）；
+      哈希基于**原始字节**；缺占位符**必须报错**，绝不让 `{schema}` 字面量发给模型；
+      指定版本不存在时**报错**，不回落「最大版本」（静默回落会让「v2 不存在」
+      变成「用 v1 跑」，与 L-07a 同类）。
+      回归测试：`tests/unit/test_prompt_loading.py`（23 项）
+- [x] 写入 `prompt_versions`（版本、哈希、变更说明）
+      ——`template_hash` 与磁盘文件实际哈希一致，登记幂等（重复调用不触发唯一约束冲突）
+- [x] 输出携带 `model_id`、`prompt_version`、`agent_version`
+      ——`analysis_reports.versions` 不再是 `{}`，现写入
+      `model_id` / `prompt_version` / `feature_version`。
+      `agent_version` 待多 Agent 拆分后补齐
 
 **多 Agent 编排（PRD 4.7、24.4）**
 - [ ] 拆分 Technical、Market Structure、Market Regime、Derivatives、Liquidity、Event/Risk 等 Agent
@@ -125,6 +153,8 @@
 - [ ] Master Agent 综合，区分事实、推断与待验证假设
 - [ ] 基于 `langgraph` 编排（依赖已声明但未使用）
 - [ ] 每次 Agent 调用写 `agent_runs` 与 `agent_outputs`，记录输入快照引用、耗时、token
+      ——**表已就位且 `model_runs` 已接通**，`agent_runs` / `agent_outputs`
+      仍待多 Agent 拆分后写入
 - [ ] Reflection：最多 1 轮，仅针对具体争议点
 
 **模型分层（PRD 24.1、24.3）**
@@ -234,7 +264,8 @@
 ## P10：数据库迁移补齐
 
 - [ ] 核对 PRD 第 30.9 节完整表清单，补齐缺失表
-- [ ] 待建表：`scheduled_jobs`、`job_runs`、`job_locks`、`signals`、`predictions`、`anomaly_evaluations`、`model_pricing`、`notification_templates`、`notification_channel_state`
+- [ ] 待建表：`scheduled_jobs`、`job_runs`、`job_locks`、`signals`、`predictions`、`anomaly_evaluations`、`notification_templates`、`notification_channel_state`
+      （`model_pricing` 已于 `0006_model_pricing` 建立）
 - [ ] 核对已有表与 PRD 第 30 章字段、索引、CHECK 约束一致
 
 ## 待实验校准的参数（不阻断开发，需数据支撑）

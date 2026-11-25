@@ -151,6 +151,8 @@ def create_report(
     content: AnalysisReportContent,
     status: AnalysisRunStatus = AnalysisRunStatus.COMPLETE,
     now: dt.datetime,
+    versions: dict[str, str] | None = None,
+    agent_run_ids: list[str] | None = None,
 ) -> dict[str, Any]:
     run = db.get(AnalysisRunRecord, run_id, with_for_update=True)
     if run is None:
@@ -212,8 +214,8 @@ def create_report(
         content=content.model_dump(mode="json"),
         previous_analysis_id=previous.analysis_id if previous else None,
         supersedes_id=None,
-        agent_run_ids=[],
-        versions={},
+        agent_run_ids=agent_run_ids or [],
+        versions=versions or {},
         degraded=status == AnalysisRunStatus.PARTIAL,
         degraded_reason="仅使用已收盘 K 线，其他数据源尚未接入"
         if status == AnalysisRunStatus.PARTIAL

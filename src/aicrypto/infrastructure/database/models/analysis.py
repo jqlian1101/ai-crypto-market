@@ -114,6 +114,38 @@ class PromptVersion(Base):
     __table_args__ = (idx("idx_prompt_versions_created", "created_at"),)
 
 
+class ModelPricing(Base):
+    """模型单价表（PRD 30.4 / 24.2）。
+
+    单价以 **USD / 百万 token** 存储（``input_usd_per_mtok`` /
+    ``output_usd_per_mtok``）——这是供应商报价的惯例单位，
+    直接存「每 token 单价」会引入大量小数位，容易在换算时丢精度。
+
+    **单价版本化**：``pricing_version`` 记录这行单价的版本号。
+    改了单价就新增一行（``model_id`` + ``pricing_version`` 唯一），
+    历史 ``llm_cost_records.price_snapshot`` 里已经固化了当时的单价，
+    因此改价不会让历史成本失真。
+    """
+
+    __tablename__ = "model_pricing"
+    model_id: Mapped[str] = mapped_column(Text, nullable=False, primary_key=True)
+    pricing_version: Mapped[str] = mapped_column(Text, nullable=False, primary_key=True)
+    provider: Mapped[str] = mapped_column(Text, nullable=False)
+    input_usd_per_mtok: Mapped[Decimal] = mapped_column(nullable=False)
+    output_usd_per_mtok: Mapped[Decimal] = mapped_column(nullable=False)
+    currency: Mapped[str] = mapped_column(Text, nullable=False, server_default="USD")
+    effective_from: Mapped[dt.datetime] = mapped_column(nullable=False)
+    created_at: Mapped[dt.datetime] = mapped_column(nullable=False)
+    __table_args__ = (
+        ck("ck_model_pricing_currency", "currency IN ('USD')"),
+        ck(
+            "ck_model_pricing_non_negative",
+            "input_usd_per_mtok >= 0 AND output_usd_per_mtok >= 0",
+        ),
+        desc_idx("idx_model_pricing_lookup", "model_id", "effective_from"),
+    )
+
+
 class AgentVersion(Base):
     __tablename__ = "agent_versions"
     agent_name: Mapped[str] = mapped_column(Text, nullable=False, primary_key=True)

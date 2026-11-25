@@ -46,10 +46,14 @@ def test_analysis_lifecycle(monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setattr(
             analysis_worker,
             "generate_report",
-            lambda *args: AnalysisReportContent(
-                summary="测试报告",
-                market_bias="NEUTRAL",
-                time_horizon="4h",
+            lambda *args, **kwargs: (
+                AnalysisReportContent(
+                    summary="测试报告",
+                    market_bias="NEUTRAL",
+                    time_horizon="4h",
+                ),
+                "test-model",
+                "v1",
             ),
         )
         app = create_app(settings)
