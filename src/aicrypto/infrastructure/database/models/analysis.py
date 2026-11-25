@@ -103,8 +103,21 @@ class LLMCostRecord(Base):
 
 
 class PromptVersion(Base):
+    """Prompt 版本登记（PRD 24.5）。
+
+    **主键是 ``(agent_name, template_name, prompt_version)`` 三元组**——
+    不是二元组。原因是**同一个 Agent 下每个模板各有独立版本号**：
+    ``prompts/master/analysis.v1.md``（system）与
+    ``prompts/master/analysis.user.v1.md``（user）**都是 ``(master, v1)``**。
+
+    二元组主键会让 user 模板的登记被**静默丢弃**（与 system 撞主键），
+    导致「改一个字的 Prompt 无法追溯是哪一版产出」对 user 模板完全失效——
+    而 user 模板承载了「快照怎么渲染给模型」的全部指令。
+    """
+
     __tablename__ = "prompt_versions"
     agent_name: Mapped[str] = mapped_column(Text, nullable=False, primary_key=True)
+    template_name: Mapped[str] = mapped_column(Text, nullable=False, primary_key=True)
     prompt_version: Mapped[str] = mapped_column(Text, nullable=False, primary_key=True)
     template_path: Mapped[str] = mapped_column(Text, nullable=False)
     template_hash: Mapped[str] = mapped_column(Text, nullable=False)

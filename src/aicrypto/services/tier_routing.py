@@ -133,16 +133,20 @@ def resolve_tier_route(
     **解析顺序**：
 
     1. **本地优先**（``prefer_local=True``）：本地模型可用就用本地——
-       本地调用不花钱，这是成本优化 R3 的关键。若本地未配置模型，
-       直接回退云端（并标注降级）。
-    2. **档位未配置模型**：按 ``fallback_tiers`` 逐级降级，
+       本地调用不花钱，这是成本优化 R3 的关键。
+    2. **云端 + 档位降级链**：按 ``fallback_tiers`` 逐级降级，
        每一级都标注降级原因。**绝不静默用一个别的档位**。
     3. **全部未配置**：抛 ``LLM_UNAVAILABLE``——这里不能降级到
        「随便找个模型」，静默用错档位比失败更危险。
 
-    **注意本地优先的降级标注**：本地未配置模型时回退云端，
-    档位**不变**（仍然是请求的档位），只是供应商变了。
+    **本地优先的降级标注**：本地未配置模型时回退云端，
+    **档位不变**（仍然是请求的档位），只是供应商变了。
     这与「档位降级」是两回事——``degraded_reason`` 会区分开。
+
+    **本地未配置模型时回退云端，走的也是同一条降级链**：
+    若目标档位的云端模型也没配，照样降级到下一档；全部都没配就抛错。
+    **绝不能返回一个空模型名**——那是「静默用错档位」的另一种形式：
+    请求会被带着空的 ``model`` 字段发出去，失败原因还很难定位。
     """
     # ---- 1. 本地优先 ----
     if prefer_local:
@@ -160,8 +164,10 @@ def resolve_tier_route(
                     else None
                 ),
             )
-        # 本地没配模型 -> 回退云端，档位不变
-        cloud = _cloud_route(settings, requested_tier)
+        # 本地没配模型 -> 回退云端。**仍走下面的降级链**，
+        # 不能在这里直接 _cloud_route()——那会绕过降级，
+        # 在目标档位也没配模型时返回空模型名（静默失败）。
+        cloud = _resolve_cloud_route(settings, requested_tier)
         return TierRoute(
             tier=cloud.tier,
             requested_tier=requested_tier,
@@ -170,10 +176,22 @@ def resolve_tier_route(
             base_url=cloud.base_url,
             api_key=cloud.api_key,
             degraded=True,
-            degraded_reason=str(TierFallbackReason.TIER_MODEL_UNCONFIGURED),
+            degraded_reason=(
+                cloud.degraded_reason or str(TierFallbackReason.TIER_MODEL_UNCONFIGURED)
+            ),
         )
 
     # ---- 2. 云端 + 档位降级链 ----
+    return _resolve_cloud_route(settings, requested_tier)
+
+
+def _resolve_cloud_route(settings: Settings, requested_tier: ModelTier) -> TierRoute:
+    """云端路由：沿降级链找第一个配置了模型的档位。
+
+    全部档位都没配模型时抛 ``LLM_UNAVAILABLE``——
+    **不能返回一个空模型名**：那会让请求带着空的 ``model`` 字段发出去，
+    失败原因还很难定位，比直接报错糟糕得多。
+    """
     candidates = [requested_tier, *fallback_tiers(requested_tier)]
     last_reason: str | None = None
     for index, tier in enumerate(candidates):
@@ -206,8 +224,19 @@ def resolve_tier_route(
 
 
 def _cloud_route(settings: Settings, tier: ModelTier, *, model: str | None = None) -> TierRoute:
-    """构造云端路由。"""
+    """构造云端路由。
+
+    **绝不能返回空模型名**——空 ``model`` 字段会让请求带着空模型发出去，
+    失败原因极难定位。调用方（``_resolve_cloud_route``）保证传入的
+    ``model`` 非空，这里再做一道防御。
+    """
     model_id = model or model_for_tier(settings, tier) or ""
+    if not model_id:
+        raise AICryptoError(
+            ErrorCode.LLM_UNAVAILABLE,
+            message=f"档位 {tier} 未配置模型",
+            details={"tier": str(tier)},
+        )
     return TierRoute(
         tier=tier,
         requested_tier=tier,

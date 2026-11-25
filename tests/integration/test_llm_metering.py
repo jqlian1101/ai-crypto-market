@@ -264,6 +264,44 @@ def test_prompt_version_registered_with_matching_hash(db_env: Session, settings:
     system_row = next(item for item in versions if item.template_path.endswith("analysis.v1.md"))
     assert system_row.template_hash == template.template_hash
     assert system_row.agent_name == "master"
+    assert system_row.template_name == "analysis"
+
+
+def test_both_prompt_templates_are_registered(
+    db_env: Session, settings: Settings
+) -> None:
+    """**回归（L-22）**：system 与 user 两个模板**都必须登记**。
+
+    曾经的缺陷：``prompt_versions`` 主键是 ``(agent_name, prompt_version)``，
+    而 ``analysis.v1.md`` 与 ``analysis.user.v1.md`` **都是 ``(master, v1)``**
+    ——user 模板的登记被 ``ON CONFLICT DO NOTHING`` **静默丢弃**。
+
+    后果：Prompt 版本审计不完整——user 模板的哈希从来没进过库，
+    而它承载了「快照怎么渲染给模型」的全部指令。
+    「改一个字的 Prompt 无法追溯是哪一版产出」（PRD 24.5）
+    对 user 模板完全失效。
+    """
+    original_client = httpx.Client
+
+    def patched_client(*args, **kwargs):
+        kwargs["transport"] = _mock_transport(_success_payload())
+        return original_client(*args, **kwargs)
+
+    httpx.Client = patched_client  # type: ignore[assignment]
+    try:
+        analysis_worker.generate_report({"indicators": {}}, settings, db=db_env)
+    finally:
+        httpx.Client = original_client  # type: ignore[assignment]
+
+    versions = list(db_env.scalars(select(PromptVersion)))
+    names = {item.template_name for item in versions}
+    assert "analysis" in names, "system 模板必须登记"
+    assert "analysis.user" in names, "**user 模板必须登记，不能被静默丢弃**"
+
+    user_row = next(item for item in versions if item.template_name == "analysis.user")
+    user_template = load_template("master", "analysis.user")
+    assert user_row.template_hash == user_template.template_hash
+    assert user_row.template_path.endswith("analysis.user.v1.md")
 
 
 def test_prompt_version_registration_is_idempotent(db_env: Session, settings: Settings) -> None:
@@ -284,8 +322,12 @@ def test_prompt_version_registration_is_idempotent(db_env: Session, settings: Se
         httpx.Client = original_client  # type: ignore[assignment]
 
     versions = list(db_env.scalars(select(PromptVersion)))
-    # 同一版本只应有一行
-    assert len({(item.agent_name, item.prompt_version) for item in versions}) == len(versions)
+    # 同一 (agent, template, version) 只应有一行
+    keys = {
+        (item.agent_name, item.template_name, item.prompt_version)
+        for item in versions
+    }
+    assert len(keys) == len(versions), "同一模板版本只应有一行"
 
 
 def test_pricing_picks_latest_effective_row(db_env: Session, settings: Settings) -> None:

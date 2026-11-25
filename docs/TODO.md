@@ -170,6 +170,18 @@
       回归测试：`tests/unit/test_prompt_loading.py`（23 项）
 - [x] 写入 `prompt_versions`（版本、哈希、变更说明）
       ——`template_hash` 与磁盘文件实际哈希一致，登记幂等（重复调用不触发唯一约束冲突）
+      ——**二次验证修复 L-23**：主键补上 `template_name`
+      （`analysis.v1.md` 与 `analysis.user.v1.md` 都是 `(master, v1)`，
+      二元组主键会让 **user 模板的登记被静默丢弃**——
+      而它承载了「快照怎么渲染给模型」的全部指令，
+      PRD 24.5 的「改一个字的 Prompt 无法追溯」对它完全失效）。
+      新增迁移 `0007_prompt_versions_template_name`（主键改三元组）。
+      回归测试：`tests/integration/test_llm_metering.py` 新增
+      `test_both_prompt_templates_are_registered`
+      + `tests/integration/test_llm_retry_concurrency.py` 新增
+      `test_concurrent_retry_does_not_duplicate_prompt_versions`
+      + 真实 HTTP 端到端 10/10（两个模板哈希与磁盘逐一比对一致）
+      + 迁移 up/down/全新库 全链可逆
 - [x] 输出携带 `model_id`、`prompt_version`、`agent_version`
       ——`analysis_reports.versions` 不再是 `{}`，现写入
       `model_id` / `prompt_version` / `feature_version`。

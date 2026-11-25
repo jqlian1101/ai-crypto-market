@@ -171,6 +171,57 @@ class TestLocalPreference:
         assert route.degraded is True
         assert route.degraded_reason == str(TierFallbackReason.TIER_MODEL_UNCONFIGURED)
 
+    def test_local_missing_still_falls_back_across_tiers(self) -> None:
+        """**回归**：本地没配 + 目标档位也没配 -> 仍要沿降级链降级。
+
+        曾经的缺陷：``prefer_local`` 分支直接调 ``_cloud_route()``，
+        **绕过了降级链**，于是返回**空模型名**——请求带着空 ``model``
+        发出去，失败原因还很难定位。
+        """
+        s = _settings(LLM_PROVIDER_LOCAL_MODEL=None, LLM_TIER_DEEP_MODEL=None)
+        route = resolve_tier_route(
+            s, requested_tier=ModelTier.TIER_DEEP, prefer_local=True
+        )
+        assert route.model_id == "standard-model", "必须沿降级链找到 STANDARD"
+        assert route.tier is ModelTier.TIER_STANDARD
+        assert route.degraded is True
+
+    def test_local_missing_and_all_tiers_unconfigured_raises(self) -> None:
+        """**回归**：本地没配 + 全部档位都没配 -> 必须抛错，**不能返回空模型名**。
+
+        空模型名是「静默用错档位」的另一种形式：请求会带着空的
+        ``model`` 字段发出去，失败原因极难定位。
+        """
+        s = _settings(
+            LLM_PROVIDER_LOCAL_MODEL=None,
+            LLM_TIER_LIGHT_MODEL=None,
+            LLM_TIER_STANDARD_MODEL=None,
+            LLM_TIER_DEEP_MODEL=None,
+        )
+        with pytest.raises(AICryptoError) as excinfo:
+            resolve_tier_route(
+                s, requested_tier=ModelTier.TIER_DEEP, prefer_local=True
+            )
+        assert excinfo.value.code == ErrorCode.LLM_UNAVAILABLE
+
+    def test_route_never_has_empty_model_id(self) -> None:
+        """**任何可解析出的路由，模型名都不得为空**。"""
+        combos = [
+            ({"LLM_PROVIDER_LOCAL_MODEL": None, "LLM_TIER_DEEP_MODEL": None}, True),
+            ({"LLM_PROVIDER_LOCAL_MODEL": "local", "LLM_TIER_DEEP_MODEL": None}, True),
+            ({"LLM_TIER_DEEP_MODEL": None}, False),
+            ({}, False),
+        ]
+        for overrides, prefer_local in combos:
+            s = _settings(**overrides)
+            try:
+                route = resolve_tier_route(
+                    s, requested_tier=ModelTier.TIER_DEEP, prefer_local=prefer_local
+                )
+            except AICryptoError:
+                continue
+            assert route.model_id, f"空模型名：overrides={overrides}"
+
     def test_local_api_key_is_optional(self) -> None:
         """本地 Ollama 默认无鉴权——不能因为没配 key 就拒绝。"""
         s = _settings(LLM_PROVIDER_LOCAL_MODEL="local-model", LLM_PROVIDER_LOCAL_API_KEY=None)

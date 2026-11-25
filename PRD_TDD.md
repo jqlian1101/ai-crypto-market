@@ -3654,7 +3654,11 @@ PRIMARY KEY (id)
 
 ```sql
 -- prompt_versions
-PRIMARY KEY (agent_name, prompt_version)
+-- 主键含 template_name：同一 Agent 下每个模板各有独立版本号，
+-- analysis.v1.md 与 analysis.user.v1.md 都是 (master, v1)，
+-- 二元组主键会让 user 模板的登记被静默丢弃（PRD 24.5）
+PRIMARY KEY (agent_name, template_name, prompt_version)
+  template_name TEXT NOT NULL
   template_path TEXT NOT NULL
   template_hash TEXT NOT NULL      -- 内容哈希，用于确认线上跑的到底是哪份
   description TEXT NULL

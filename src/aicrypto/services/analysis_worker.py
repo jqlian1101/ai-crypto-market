@@ -543,8 +543,12 @@ def register_prompt_version(
 ) -> None:
     """登记 Prompt 版本（幂等且并发安全）。
 
-    ``prompt_versions`` 的主键是 ``(agent_name, prompt_version)`` 组合，
-    重复插入会抛唯一约束冲突。
+    ``prompt_versions`` 的主键是
+    ``(agent_name, template_name, prompt_version)`` **三元组**——
+    不是二元组。原因是**同一个 Agent 下每个模板各有独立版本号**：
+    ``analysis.v1.md``（system）与 ``analysis.user.v1.md``（user）
+    **都是 ``(master, v1)``**。二元组主键会让 user 模板的登记
+    被**静默丢弃**（与 system 撞主键），Prompt 版本审计因此不完整。
 
     这里必须用**原子的 upsert**（``ON CONFLICT DO NOTHING``），而不是
     「先查再插」：后者是典型的 TOCTOU 竞态——多个 worker 并发处理
@@ -560,6 +564,7 @@ def register_prompt_version(
         pg_insert(PromptVersion)
         .values(
             agent_name=template.agent_name,
+            template_name=template.template_name,
             prompt_version=template.version,
             template_path=_relative_template_path(template.path),
             template_hash=template.template_hash,
@@ -567,7 +572,9 @@ def register_prompt_version(
             created_at=now(),
             change_note=change_note,
         )
-        .on_conflict_do_nothing(index_elements=["agent_name", "prompt_version"])
+        .on_conflict_do_nothing(
+            index_elements=["agent_name", "template_name", "prompt_version"]
+        )
     )
     db.execute(stmt)
 
