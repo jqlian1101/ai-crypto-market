@@ -208,10 +208,21 @@
 - [ ] Master Agent 综合，区分事实、推断与待验证假设
 - [ ] 基于 `langgraph` 编排（依赖已声明但未使用）
       ——`pyproject.toml` 声明了 `langgraph>=0.2`，**全仓零 import**。
-      **先决定再动手**：PRD 24.4 描述的是「LangGraph 状态图」，
-      但用**显式 fan-out/fan-in 代码**落地更简单可控。
-      若最终不用它，就**从 `pyproject.toml` 删掉**——
-      留一个永远不用的依赖，正是「声明未消费」的第 9 次。
+      **2026-11-25 已决定采用 LangGraph**（不再考虑手写 fan-out/fan-in）。
+      已验证环境可用：`langgraph 1.2.22` 已安装，
+      `StateGraph` / `Send` / `Annotated + operator.add` reducer 三件套可用，
+      最小原型已跑通 fan-out → 子 Agent（互不可见）→ fan-in（冲突标注）。
+      实现要点（来自原型验证）：
+      - **fan-out**：`add_conditional_edges(START, fan_out, [...])` +
+        `Send(f"agent_{name}", {...})` 动态分叉
+        （`Send` 从 `langgraph.types` 导入，**不在** `langgraph.graph` 里）；
+      - **并发写同一 state key 必须配 reducer**——
+        不配则并发写入直接抛异常（原型中 `agent_outputs` 用
+        `Annotated[list[dict], operator.add]` 解决）；
+      - **fan-in**：普通节点汇总各分支输出并标注冲突。
+      注意：`pyproject.toml` 声明的是 `langgraph>=0.2`，
+      而实测环境是 `1.2.22`——**声明下限与实际版本严重不符**，
+      需同步为 `>=1.2`（`Send` / reducer 语义在 1.x 才是稳定的）。
 - [ ] 每次 Agent 调用写 `agent_runs` 与 `agent_outputs`，记录输入快照引用、耗时、token
       ——**表已就位且 `model_runs` 已接通**，`agent_runs` / `agent_outputs`
       仍待多 Agent 拆分后写入
