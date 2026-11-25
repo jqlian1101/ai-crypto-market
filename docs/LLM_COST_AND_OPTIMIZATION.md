@@ -489,6 +489,29 @@ PRD 24.4 已要求：
 | **DEEP** | `claude-opus-5-5` | `qwen3.8-max` / `gpt-6.1-sol` | 量小（$11.65），准确率杠杆最高，**不要降级这一档** |
 | **Reflection** | 复用 STANDARD，触发时升 `opus-5-5` | — | 触发少，一旦触发就是关键分歧 |
 
+> **✅ 已实现（2026-11-25）**：新增 `services/tier_routing.py`，
+> 三档调用路径全部接通（此前 `LLM_TIER_LIGHT_MODEL` / `LLM_TIER_DEEP_MODEL`
+> **定义了却无人读取**，调用路径硬编码 `TIER_STANDARD`——
+> 枚举、CHECK 约束、成本模型全都就位，唯独「选哪个模型」这步没接上，
+> 整套分层的收益完全落空）。
+>
+> 三条已落地的规则：
+> - **DEEP 绝不降级到 LIGHT**（PRD 24.1「不要降级这一档」）：
+>   拿 LIGHT 档的模型冒充 DEEP 的结果**比直接失败更糟**。
+>   降级链是 `DEEP → STANDARD → LIGHT`，DEEP 只降一档且不到 LIGHT。
+> - **降级必须留痕**：`degraded` / `degraded_reason` 写入报告，
+>   原因区分 `LOCAL_UNAVAILABLE` 与 `TIER_MODEL_UNCONFIGURED`。
+>   **静默降级最危险**——读者会以为拿到的是原档位的结论。
+> - **落库的是实际生效的档位**（降级后可能低于请求的档位）：
+>   否则成本报表会把 LIGHT 的费用算到 DEEP 头上，
+>   分层优化的效果就无法度量。
+>
+> 注意：**`model_runs` 表没有 `tier` 列**——按档位分组是成本报表的需求，
+> 档位落在 `llm_cost_records.tier`（通过 `model_run_id` 关联到每次尝试）。
+>
+> 实测：真实 HTTP 端到端 21/21——三档各自的请求体模型、落库档位、
+> 按档位单价的费用计算，以及**本地真实连接失败后自动回退云端并标注降级**。
+
 ### 6.3 双通道分工
 
 | 场景 | 主用 | 回退 | 说明 |

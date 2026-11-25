@@ -32,7 +32,12 @@ from aicrypto.common.errors import AICryptoError, ErrorCode
 from aicrypto.common.ids import new_snapshot_id
 from aicrypto.config.prompts import PromptTemplate, load_template
 from aicrypto.config.settings import PROJECT_ROOT, Settings, get_settings
-from aicrypto.domain.analysis.report import AnalysisReportContent, AnalysisRunStatus
+from aicrypto.domain.analysis.agent_output import ModelTier
+from aicrypto.domain.analysis.report import (
+    AnalysisMode,
+    AnalysisReportContent,
+    AnalysisRunStatus,
+)
 from aicrypto.domain.market.indicators import (
     FEATURE_VERSION,
     atr,
@@ -74,6 +79,11 @@ from aicrypto.services.llm_retry import (
     summarize_validation_issues,
 )
 from aicrypto.services.market import candle_payload
+from aicrypto.services.tier_routing import (
+    TierFallbackReason,
+    resolve_tier_route,
+    tier_for_trigger,
+)
 
 logger = get_logger(__name__)
 
@@ -328,9 +338,11 @@ def parse_report_content(raw: str) -> AnalysisReportContent:
 def resolve_model_and_provider(settings: Settings) -> tuple[str, str, str | None, str | None]:
     """解析本次调用使用的 (provider, model, base_url, api_key)。
 
-    档位固定为 ``TIER_STANDARD``：本阶段只接通标准档（24.1 的
-    ``TIER_LIGHT`` / ``TIER_DEEP`` 属于后续阶段）。但**档位要显式记录**，
-    否则成本报表无法按档位分组。
+    **保留这个函数是为了兼容旧调用方**（返回 4 元组）。
+    新代码请用 :func:`tier_routing.resolve_tier_route`——
+    它额外返回**档位**与**降级信息**，成本报表按档位分组依赖这些。
+
+    这里的档位固定为 ``TIER_STANDARD``（向后兼容旧行为）。
     """
     local = str(settings.LLM_PROVIDER_DEFAULT) == "local"
     if local:
@@ -656,11 +668,15 @@ def _record_attempt(
     latency_ms: int,
     retry_count: int,
     error: dict[str, Any] | None,
+    tier: str,
 ) -> None:
     """记录一次 HTTP 尝试。
 
     **每一次实际发出的请求都写一行**——包括失败与被重试掉的那些。
     失败的尝试同样消耗 token，同样要计费；漏记会让成本报表系统性低估。
+
+    ``tier`` 传的是**实际生效**的档位（降级后可能低于请求的档位），
+    成本报表按档位分组靠的就是这一列。
     """
     record_model_run(
         db,
@@ -674,9 +690,20 @@ def _record_attempt(
         retry_count=retry_count,
         error=error,
         agent_name=PROMPT_AGENT_NAME,
-        tier="TIER_STANDARD",
+        tier=tier,
         pricing=resolve_pricing(db, model_id=model, as_of=now()),
     )
+
+
+def _can_fallback_to_cloud(settings: Settings) -> bool:
+    """云端是否可用（能否作为本地不可用时的回退目标）。
+
+    云端不可用时回退没有意义——那只会把「本地连不上」换成
+    「云端也连不上」，还多记一次失败调用。
+    """
+    if not settings.LLM_CLOUD_BASE_URL:
+        return False
+    return bool(settings.LLM_TIER_STANDARD_MODEL or settings.LLM_TIER_LIGHT_MODEL)
 
 
 def generate_report(
@@ -685,6 +712,9 @@ def generate_report(
     *,
     db: Any,
     deadline: dt.datetime | None = None,
+    tier: ModelTier = ModelTier.TIER_STANDARD,
+    prefer_local: bool = False,
+    call_info: dict[str, Any] | None = None,
 ) -> tuple[AnalysisReportContent, str, str]:
     """调用模型生成报告。
 
@@ -705,8 +735,21 @@ def generate_report(
        **不重传原始快照上下文**（PRD v2.3 / 成本优化 O12）。
     3. ``LLM_MAX_INPUT_TOKENS``——发请求前拦截超长输入
        （输入阶梯计价，超限会让成本成倍上涨，成本优化 O11）。
+
+    **档位**（PRD 24.1）：``tier`` 决定用哪一档的模型；
+    实际生效的档位（可能已降级）会写入 ``model_runs.tier`` /
+    ``llm_cost_records.tier``，成本报表据此按档位分组。
     """
-    provider, model, base, secret = resolve_model_and_provider(settings)
+    route = resolve_tier_route(settings, requested_tier=tier, prefer_local=prefer_local)
+    provider = route.provider
+    model = route.model_id
+    base = route.base_url
+    secret = route.api_key
+    # **实际生效**的档位（降级后可能低于请求的档位）——成本报表按它分组。
+    tier_label = str(route.tier)
+    #: 降级原因（None = 未降级）。发生降级时**必须在输出中标注**，
+    #: 否则读者会误以为拿到的是原档位的结论。
+    degraded_reason: str | None = route.degraded_reason
     if not base or not model:
         raise AICryptoError(ErrorCode.LLM_UNAVAILABLE, message="分析模型地址或模型名未配置")
     headers = {"Authorization": f"Bearer {secret}"} if secret else {}
@@ -757,6 +800,9 @@ def generate_report(
     attempt = 0
     repair_used = 0
     last_error: AICryptoError | None = None
+    #: 是否已经尝试过「本地不可用 -> 回退云端」。
+    #: 只回退一次：回退后仍失败就说明云端也不可用，再回退也没用。
+    local_fallback_used = False
 
     while True:
         attempt += 1
@@ -787,7 +833,38 @@ def generate_report(
                     "error_type": type(exc).__name__,
                     "retryable": retryable,
                 },
+                tier=tier_label,
             )
+            # **本地模型不可用 -> 回退云端**（PRD 24.3）。
+            # 回退后**必须在输出中标注 degraded**——静默降级最危险：
+            # 读者会以为拿到的是本地模型的结论，实际是云端模型跑的。
+            if (
+                retryable
+                and provider == "local"
+                and not local_fallback_used
+                and _can_fallback_to_cloud(settings)
+            ):
+                local_fallback_used = True
+                cloud = resolve_tier_route(
+                    settings,
+                    requested_tier=route.requested_tier,
+                    prefer_local=False,
+                )
+                provider = cloud.provider
+                model = cloud.model_id
+                base = cloud.base_url
+                secret = cloud.api_key
+                tier_label = str(cloud.tier)
+                headers = {"Authorization": f"Bearer {secret}"} if secret else {}
+                payload = {**payload, "model": model}
+                degraded_reason = str(TierFallbackReason.LOCAL_UNAVAILABLE)
+                logger.warning(
+                    "llm_local_fallback_to_cloud",
+                    model_id=model,
+                    tier=tier_label,
+                    error_type=type(exc).__name__,
+                )
+                continue
             if retryable and should_retry(
                 outcome=AttemptOutcome.RETRYABLE,
                 attempt=attempt,
@@ -830,6 +907,7 @@ def generate_report(
                     latency_ms=latency_ms,
                     retry_count=attempt - 1,
                     error={"stage": "output_validation", "issues": issues},
+                tier=tier_label,
                 )
                 last_error = AICryptoError(
                     ErrorCode.LLM_SCHEMA_INVALID,
@@ -860,6 +938,7 @@ def generate_report(
                     latency_ms=latency_ms,
                     retry_count=attempt - 1,
                     error={"stage": "response_envelope"},
+                tier=tier_label,
                 )
                 last_error = AICryptoError(
                     ErrorCode.LLM_SCHEMA_INVALID, details={"stage": "response_envelope"}
@@ -889,9 +968,22 @@ def generate_report(
                 latency_ms=latency_ms,
                 retry_count=attempt - 1,
                 error=None,
+                tier=tier_label,
             )
             register_prompt_version(db, template=system_template, change_note="初始版本")
             register_prompt_version(db, template=user_template, change_note="初始版本")
+            if call_info is not None:
+                # 把实际生效的档位与降级信息回传，供调用方写入报告。
+                call_info.update(
+                    {
+                        "tier": tier_label,
+                        "requested_tier": str(route.requested_tier),
+                        "provider": provider,
+                        "model_id": model,
+                        "degraded": degraded_reason is not None,
+                        "degraded_reason": degraded_reason,
+                    }
+                )
             return content, model, system_template.version
 
         # ---- 非成功：按分类处理 ----
@@ -907,6 +999,7 @@ def generate_report(
                 latency_ms=latency_ms,
                 retry_count=attempt - 1,
                 error={"stage": "output_truncated"},
+                tier=tier_label,
             )
             raise AICryptoError(
                 ErrorCode.LLM_SCHEMA_INVALID, details={"stage": "output_truncated"}
@@ -925,6 +1018,7 @@ def generate_report(
                 latency_ms=latency_ms,
                 retry_count=attempt - 1,
                 error={"stage": "provider_http", "http_status": response.status_code},
+                tier=tier_label,
             )
             if should_retry(
                 outcome=outcome,
@@ -956,6 +1050,7 @@ def generate_report(
             latency_ms=latency_ms,
             retry_count=attempt - 1,
             error={"stage": "provider_http", "http_status": response.status_code},
+                tier=tier_label,
         )
         if response.status_code == 400:
             raise AICryptoError(
@@ -1039,8 +1134,23 @@ def process_one(settings: Settings) -> bool:
         # 报告的 versions 引用 model_id / prompt_version，三者要么一起成功、
         # 要么一起回滚，不允许出现「有报告无成本」或「有成本无报告」。
         with session_scope(settings) as db:
+            # **档位由触发来源决定**（PRD 24.1 / 24.3）：
+            # 复盘 / 日报 / 分歧复盘走 DEEP，其余走 STANDARD。
+            run_row = db.get(AnalysisRunRecord, run_id)
+            trigger = run_row.trigger if run_row is not None else "MANUAL"
+            analysis_mode = run_row.analysis_mode if run_row is not None else "LIVE"
+            tier = tier_for_trigger(
+                trigger,
+                retrospective=analysis_mode == AnalysisMode.RETROSPECTIVE,
+            )
+            call_info: dict[str, Any] = {}
             content, model_id, prompt_version = generate_report(
-                snapshot, settings, db=db, deadline=deadline
+                snapshot,
+                settings,
+                db=db,
+                deadline=deadline,
+                tier=tier,
+                call_info=call_info,
             )
             if time.monotonic() - started > settings.LLM_ANALYSIS_TOTAL_BUDGET_SECONDS:
                 raise TimeoutError("分析任务超过总时限")
@@ -1055,7 +1165,10 @@ def process_one(settings: Settings) -> bool:
                     "model_id": model_id,
                     "prompt_version": prompt_version,
                     "feature_version": FEATURE_VERSION,
+                    "tier": str(call_info.get("tier", tier)),
+                    "requested_tier": str(call_info.get("requested_tier", tier)),
                 },
+                degraded_reason=call_info.get("degraded_reason"),
             )
     except Exception as exc:
         # 每项任务单独落终态；不记录模型密钥、请求头或原始响应。

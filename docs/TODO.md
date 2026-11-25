@@ -187,11 +187,33 @@
 - [ ] Reflection：最多 1 轮，仅针对具体争议点
 
 **模型分层（PRD 24.1、24.3）**
-- [ ] 启用 `TIER_LIGHT` 与 `TIER_DEEP` 调用路径（当前只用 STANDARD）
-- [ ] 日报与分歧复盘使用 DEEP
-- [ ] 本地模型不可用时回退云端，并在输出中标注
+- [x] 启用 `TIER_LIGHT` 与 `TIER_DEEP` 调用路径（当前只用 STANDARD）
+      ——新增 `services/tier_routing.py`；此前 `LLM_TIER_LIGHT_MODEL` /
+      `LLM_TIER_DEEP_MODEL` **定义了却无人读取**，调用路径硬编码
+      `TIER_STANDARD`。现按档位解析模型，并把**实际生效**的档位写入
+      `llm_cost_records.tier`（成本报表按档位分组的唯一依据）。
+      **DEEP 绝不降级到 LIGHT**（PRD 24.1「不要降级这一档」）——
+      拿 LIGHT 档的模型冒充 DEEP 的结果比直接失败更糟。
+      回归测试：`tests/unit/test_tier_routing.py`（29 项）
+      + `tests/integration/test_tier_routing.py`（9 项，真库）
+      + 真实 HTTP 端到端验证（21/21）
+- [x] 日报与分歧复盘使用 DEEP
+      ——`tier_for_trigger()`：`RETROSPECTIVE` / `DAILY` / `WEEKLY` /
+      `REVIEW` / `DEEP` 走 DEEP，其余（`MANUAL` / `SCHEDULED` / `ANOMALY`）
+      走 STANDARD。**显式的 `retrospective=True` 优先于从 trigger 猜**——
+      显式意图比字符串匹配可靠。
+- [x] 本地模型不可用时回退云端，并在输出中标注
+      ——本地传输层错误时回退云端**一次**（再回退也没用）；
+      降级写入 `degraded` / `degraded_reason`（原因区分
+      `LOCAL_UNAVAILABLE` 与 `TIER_MODEL_UNCONFIGURED`）。
+      **静默降级最危险**——读者会以为拿到的是原档位的结论。
+      云端未配置时**不做回退**（只会把「本地连不上」换成「云端也连不上」）。
 - [ ] 超时时输出「已完成部分」的部分结果，而非整体失败（PRD 24.4）
-- [ ] 报告写入 `degraded`、`degraded_reason`
+- [x] 报告写入 `degraded`、`degraded_reason`
+      ——`create_report` 新增 `degraded_reason` 参数；
+      降级时报告标记 degraded 并附原因。
+      注意：`model_runs` 表**没有** `tier` 列——按档位分组是成本报表的需求，
+      档位落在 `llm_cost_records.tier`（通过 `model_run_id` 关联）。
 
 **证据与校验（PRD 4.7.3）**
 - [ ] 程序校验 `source_path` 指向的值与快照一致
