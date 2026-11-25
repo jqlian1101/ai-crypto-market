@@ -2,8 +2,9 @@
 
 > 状态说明：`[x]` 表示已实现**且有测试覆盖**；`[ ]` 表示未做或未验证。
 > 最近一次核对（2026-11-25）：P0 / P1 / P2 / P3 主体已完成，
-> 后端测试 **793 passed / 0 skipped**（本地 Postgres 16 + Redis 7 跑通全部集成测试）。
-> P4 已完成「Prompt 外置 + 模型调用计量 + 单价表接入」，多 Agent 拆分待做。
+> 后端测试 **930 passed / 0 skipped**（本地 Postgres 16 + Redis 7 跑通全部集成测试）。
+> P4 已完成「Prompt 外置 + 模型调用计量 + 单价表接入 + 模型分层 +
+> **超时部分结果**」，多 Agent 拆分待做。
 >
 > **遗留问题（已确认存在但未修复）单独记录在 [`docs/遗留问题.md`](遗留问题.md)**，
 > 本清单只列任务级待办。
@@ -220,7 +221,33 @@
       `LOCAL_UNAVAILABLE` 与 `TIER_MODEL_UNCONFIGURED`）。
       **静默降级最危险**——读者会以为拿到的是原档位的结论。
       云端未配置时**不做回退**（只会把「本地连不上」换成「云端也连不上」）。
-- [ ] 超时时输出「已完成部分」的部分结果，而非整体失败（PRD 24.4）
+- [x] 超时时输出「已完成部分」的部分结果，而非整体失败（PRD 24.4）
+      ——新增 `services/partial_result.py`：从**已算好的快照**里提取
+      确定性事实（各周期 regime / 结构 / 支撑阻力位），
+      产出 `status="PARTIAL"` + `degraded=True` 的报告。
+      **不伪造红线**（PRD 32.4）：`market_bias="UNAVAILABLE"`（**不是 `NEUTRAL`**）、
+      `scenarios=[]`、`scenario_probabilities=None`、`dominant_factors=[]`。
+      **Schema 修复失败是例外**——那时模型跑完了只是输出不合法，
+      拿不合规输出拼部分报告等于把不可信内容洗成「部分可信」，
+      故仍落 `FAILED` 并如实登记 `record_missing_agent`。
+      回归测试：`tests/unit/test_partial_result.py`（18 项）
+      + `tests/integration/test_partial_result.py`（4 项，真库）
+      + 真实 socket 端到端 `scripts/verify_partial_result_timeout.py`
+- [x] **计量独立于报告事务**（2026-11-25，L-24）
+      ——**计量与报告同事务**会让模型调用失败时的**整个事务回滚**，
+      **已烧掉的 token 与费用一起被销毁**，成本报表**系统性低估**
+      （且模型越不稳定低估越多）。改为计量走独立事务，
+      **每一次 HTTP 尝试立即提交**。
+      代价：可能出现「有调用记录但没报告」——但那**恰恰是真实发生过的事**，
+      比悄悄抹掉更诚实。
+      回归测试：`tests/integration/test_partial_result.py::test_metering_survives_transaction_rollback`
+      （让异常穿过真实 `session_scope`，断言 2 次尝试的计量存活）
+- [x] **超时必须如实标为 `TIMEOUT`**（2026-11-25，L-25）
+      ——超时被包成 `AICryptoError` 后**类型检查失配**，
+      `degraded_reason` 会写成 `MODEL_CALL_FAILED`，
+      **降级原因与真实原因不符**，排查会被引向错误方向。
+      改为**同时按异常类型与错误码判定**。
+      回归测试：`tests/integration/test_partial_result.py::test_timeout_is_classified_as_timeout_not_call_failure`
 - [x] 报告写入 `degraded`、`degraded_reason`
       ——`create_report` 新增 `degraded_reason` 参数；
       降级时报告标记 degraded 并附原因。

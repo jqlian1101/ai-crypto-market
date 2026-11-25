@@ -244,9 +244,7 @@ def _cloud_route(settings: Settings, tier: ModelTier, *, model: str | None = Non
         model_id=model_id,
         base_url=settings.LLM_CLOUD_BASE_URL or "",
         api_key=(
-            settings.LLM_CLOUD_API_KEY.get_secret_value()
-            if settings.LLM_CLOUD_API_KEY
-            else None
+            settings.LLM_CLOUD_API_KEY.get_secret_value() if settings.LLM_CLOUD_API_KEY else None
         ),
     )
 

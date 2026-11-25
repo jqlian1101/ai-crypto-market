@@ -65,9 +65,7 @@ def _counter_value(counter, **labels) -> float:
     return counter.labels(**labels)._value.get()
 
 
-def test_model_run_publishes_request_and_token_metrics(
-    db_env: Session, settings
-) -> None:
+def test_model_run_publishes_request_and_token_metrics(db_env: Session, settings) -> None:
     """一次成功调用必须让请求数、token、费用指标都动起来。"""
     pricing = ModelPricing(
         model_id="metric-model",
@@ -89,12 +87,8 @@ def test_model_run_publishes_request_and_token_metrics(
         agent="master",
         status="SUCCESS",
     )
-    before_in = _counter_value(
-        metrics.llm_tokens_total, model_id="metric-model", direction="in"
-    )
-    before_out = _counter_value(
-        metrics.llm_tokens_total, model_id="metric-model", direction="out"
-    )
+    before_in = _counter_value(metrics.llm_tokens_total, model_id="metric-model", direction="in")
+    before_out = _counter_value(metrics.llm_tokens_total, model_id="metric-model", direction="out")
 
     analysis_worker.record_model_run(
         db_env,
@@ -126,15 +120,11 @@ def test_model_run_publishes_request_and_token_metrics(
         == before_requests + 1
     )
     assert (
-        _counter_value(
-            metrics.llm_tokens_total, model_id="metric-model", direction="in"
-        )
+        _counter_value(metrics.llm_tokens_total, model_id="metric-model", direction="in")
         == before_in + 1000
     )
     assert (
-        _counter_value(
-            metrics.llm_tokens_total, model_id="metric-model", direction="out"
-        )
+        _counter_value(metrics.llm_tokens_total, model_id="metric-model", direction="out")
         == before_out + 500
     )
 

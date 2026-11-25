@@ -148,9 +148,7 @@ class TestLocalPreference:
             LLM_PROVIDER_LOCAL_MODEL="local-model",
             LLM_PROVIDER_LOCAL_BASE_URL="http://ollama:11434/v1",
         )
-        route = resolve_tier_route(
-            s, requested_tier=ModelTier.TIER_LIGHT, prefer_local=True
-        )
+        route = resolve_tier_route(s, requested_tier=ModelTier.TIER_LIGHT, prefer_local=True)
         assert route.provider == "local"
         assert route.model_id == "local-model"
         assert route.base_url == "http://ollama:11434/v1"
@@ -162,9 +160,7 @@ class TestLocalPreference:
         注意：这与「档位降级」是两回事——档位没变，只是供应商变了。
         """
         s = _settings(LLM_PROVIDER_LOCAL_MODEL=None)
-        route = resolve_tier_route(
-            s, requested_tier=ModelTier.TIER_STANDARD, prefer_local=True
-        )
+        route = resolve_tier_route(s, requested_tier=ModelTier.TIER_STANDARD, prefer_local=True)
         assert route.provider == "cloud"
         assert route.tier is ModelTier.TIER_STANDARD
         assert route.requested_tier is ModelTier.TIER_STANDARD
@@ -179,9 +175,7 @@ class TestLocalPreference:
         发出去，失败原因还很难定位。
         """
         s = _settings(LLM_PROVIDER_LOCAL_MODEL=None, LLM_TIER_DEEP_MODEL=None)
-        route = resolve_tier_route(
-            s, requested_tier=ModelTier.TIER_DEEP, prefer_local=True
-        )
+        route = resolve_tier_route(s, requested_tier=ModelTier.TIER_DEEP, prefer_local=True)
         assert route.model_id == "standard-model", "必须沿降级链找到 STANDARD"
         assert route.tier is ModelTier.TIER_STANDARD
         assert route.degraded is True
@@ -199,9 +193,7 @@ class TestLocalPreference:
             LLM_TIER_DEEP_MODEL=None,
         )
         with pytest.raises(AICryptoError) as excinfo:
-            resolve_tier_route(
-                s, requested_tier=ModelTier.TIER_DEEP, prefer_local=True
-            )
+            resolve_tier_route(s, requested_tier=ModelTier.TIER_DEEP, prefer_local=True)
         assert excinfo.value.code == ErrorCode.LLM_UNAVAILABLE
 
     def test_route_never_has_empty_model_id(self) -> None:
@@ -225,9 +217,7 @@ class TestLocalPreference:
     def test_local_api_key_is_optional(self) -> None:
         """本地 Ollama 默认无鉴权——不能因为没配 key 就拒绝。"""
         s = _settings(LLM_PROVIDER_LOCAL_MODEL="local-model", LLM_PROVIDER_LOCAL_API_KEY=None)
-        route = resolve_tier_route(
-            s, requested_tier=ModelTier.TIER_LIGHT, prefer_local=True
-        )
+        route = resolve_tier_route(s, requested_tier=ModelTier.TIER_LIGHT, prefer_local=True)
         assert route.api_key is None
         assert route.provider == "local"
 
@@ -265,18 +255,14 @@ class TestTierForTrigger:
         """
         assert tier_for_trigger(trigger) is ModelTier.TIER_STANDARD
 
-    @pytest.mark.parametrize(
-        "trigger", ["RETROSPECTIVE", "DAILY", "WEEKLY", "REVIEW", "DEEP"]
-    )
+    @pytest.mark.parametrize("trigger", ["RETROSPECTIVE", "DAILY", "WEEKLY", "REVIEW", "DEEP"])
     def test_review_triggers_use_deep(self, trigger: str) -> None:
         """日报 / 周报 / 分歧复盘用 DEEP（PRD 24.3）。"""
         assert tier_for_trigger(trigger) is ModelTier.TIER_DEEP
 
     def test_retrospective_flag_overrides_trigger(self) -> None:
         """显式意图优先于从 trigger 字符串里猜。"""
-        assert (
-            tier_for_trigger("MANUAL", retrospective=True) is ModelTier.TIER_DEEP
-        )
+        assert tier_for_trigger("MANUAL", retrospective=True) is ModelTier.TIER_DEEP
 
     def test_trigger_is_case_insensitive(self) -> None:
         assert tier_for_trigger("daily") is ModelTier.TIER_DEEP

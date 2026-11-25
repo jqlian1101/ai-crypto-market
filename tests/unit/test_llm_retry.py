@@ -109,48 +109,33 @@ class TestShouldRetry:
 
     def test_success_is_never_retried(self) -> None:
         policy = RetryPolicy(max_retries=3)
-        assert (
-            should_retry(outcome=AttemptOutcome.SUCCESS, attempt=1, policy=policy) is False
-        )
+        assert should_retry(outcome=AttemptOutcome.SUCCESS, attempt=1, policy=policy) is False
 
     def test_fatal_is_never_retried(self) -> None:
         """400 重试就是白烧钱。"""
         policy = RetryPolicy(max_retries=3)
-        assert (
-            should_retry(outcome=AttemptOutcome.FATAL, attempt=1, policy=policy) is False
-        )
+        assert should_retry(outcome=AttemptOutcome.FATAL, attempt=1, policy=policy) is False
 
     def test_schema_invalid_is_not_retried(self) -> None:
         """schema 失败走「修复」流程，不走普通重试。"""
         policy = RetryPolicy(max_retries=3)
         assert (
-            should_retry(
-                outcome=AttemptOutcome.SCHEMA_INVALID, attempt=1, policy=policy
-            )
-            is False
+            should_retry(outcome=AttemptOutcome.SCHEMA_INVALID, attempt=1, policy=policy) is False
         )
 
     def test_retryable_is_retried_within_budget(self) -> None:
         policy = RetryPolicy(max_retries=2)
-        assert (
-            should_retry(outcome=AttemptOutcome.RETRYABLE, attempt=1, policy=policy) is True
-        )
+        assert should_retry(outcome=AttemptOutcome.RETRYABLE, attempt=1, policy=policy) is True
 
     def test_exhausted_attempts_not_retried(self) -> None:
         """max_retries=2 时，第 2 次失败后不再重试（总共调用 2 次）。"""
         policy = RetryPolicy(max_retries=2)
-        assert (
-            should_retry(outcome=AttemptOutcome.RETRYABLE, attempt=2, policy=policy) is True
-        )
-        assert (
-            should_retry(outcome=AttemptOutcome.RETRYABLE, attempt=3, policy=policy) is False
-        )
+        assert should_retry(outcome=AttemptOutcome.RETRYABLE, attempt=2, policy=policy) is True
+        assert should_retry(outcome=AttemptOutcome.RETRYABLE, attempt=3, policy=policy) is False
 
     def test_zero_max_retries_means_single_attempt(self) -> None:
         policy = RetryPolicy(max_retries=0)
-        assert (
-            should_retry(outcome=AttemptOutcome.RETRYABLE, attempt=1, policy=policy) is False
-        )
+        assert should_retry(outcome=AttemptOutcome.RETRYABLE, attempt=1, policy=policy) is False
 
     def test_deadline_in_the_past_blocks_retry(self) -> None:
         """总预算已耗尽时不要再重试——重试只会让任务整体超时。"""

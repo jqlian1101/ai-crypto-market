@@ -195,9 +195,7 @@ def test_non_retryable_4xx_is_not_retried(db_env: Session, settings: Settings) -
     assert len(runs) == 1
 
 
-def test_429_is_retried_and_recorded_as_rate_limited(
-    db_env: Session, settings: Settings
-) -> None:
+def test_429_is_retried_and_recorded_as_rate_limited(db_env: Session, settings: Settings) -> None:
     """429（限流）可重试，且状态必须记为 RATE_LIMITED（在 CHECK 枚举内）。"""
     settings.LLM_MAX_RETRIES = 1
     settings.LLM_SCHEMA_REPAIR_ATTEMPTS = 0
@@ -221,9 +219,7 @@ def test_retry_succeeds_after_transient_failure(db_env: Session, settings: Setti
     """首次 503、重试成功：应有 2 行 model_runs，成功的 retry_count=1。"""
     settings.LLM_MAX_RETRIES = 2
     settings.LLM_SCHEMA_REPAIR_ATTEMPTS = 0
-    original, calls = _install_sequence(
-        [({"error": "boom"}, 503), (_success_payload(), 200)]
-    )
+    original, calls = _install_sequence([({"error": "boom"}, 503), (_success_payload(), 200)])
 
     try:
         content, model_id, prompt_version = analysis_worker.generate_report(
@@ -254,9 +250,7 @@ def test_schema_repair_is_attempted_and_succeeds(db_env: Session, settings: Sett
     )
 
     try:
-        content, _, _ = analysis_worker.generate_report(
-            {"indicators": {}}, settings, db=db_env
-        )
+        content, _, _ = analysis_worker.generate_report({"indicators": {}}, settings, db=db_env)
     finally:
         httpx.Client = original  # type: ignore[assignment]
 
@@ -269,9 +263,7 @@ def test_schema_repair_is_attempted_and_succeeds(db_env: Session, settings: Sett
     assert runs[1].status == "SUCCESS"
 
 
-def test_schema_repair_does_not_resend_the_snapshot(
-    db_env: Session, settings: Settings
-) -> None:
+def test_schema_repair_does_not_resend_the_snapshot(db_env: Session, settings: Settings) -> None:
     """**修复请求不得重传原始快照上下文**（PRD v2.3 / 成本优化 O12）。
 
     重传快照会让每次 schema 失败的成本翻倍以上，且模型可能
@@ -339,9 +331,7 @@ def test_schema_repair_exhausted_raises_and_never_fakes_output(
     assert all(r.status == "SCHEMA_INVALID" for r in runs)
 
 
-def test_schema_repair_disabled_means_single_attempt(
-    db_env: Session, settings: Settings
-) -> None:
+def test_schema_repair_disabled_means_single_attempt(db_env: Session, settings: Settings) -> None:
     """``LLM_SCHEMA_REPAIR_ATTEMPTS=0`` 时不重发请求。"""
     settings.LLM_MAX_RETRIES = 0
     settings.LLM_SCHEMA_REPAIR_ATTEMPTS = 0
@@ -356,9 +346,7 @@ def test_schema_repair_disabled_means_single_attempt(
     assert calls["n"] == 1
 
 
-def test_input_token_guard_blocks_before_sending(
-    db_env: Session, settings: Settings
-) -> None:
+def test_input_token_guard_blocks_before_sending(db_env: Session, settings: Settings) -> None:
     """输入超限必须在**发请求前**拦下来。
 
     输入阶梯计价（>100K 时单价 ×5），超限不是性能问题而是成本问题，
@@ -371,9 +359,7 @@ def test_input_token_guard_blocks_before_sending(
 
     try:
         with pytest.raises(AICryptoError) as excinfo:
-            analysis_worker.generate_report(
-                {"indicators": {"x": "y" * 20000}}, settings, db=db_env
-            )
+            analysis_worker.generate_report({"indicators": {"x": "y" * 20000}}, settings, db=db_env)
     finally:
         httpx.Client = original  # type: ignore[assignment]
 
@@ -385,9 +371,7 @@ def test_input_token_guard_blocks_before_sending(
     assert list(db_env.scalars(select(ModelRun))) == []
 
 
-def test_input_token_guard_allows_normal_input(
-    db_env: Session, settings: Settings
-) -> None:
+def test_input_token_guard_allows_normal_input(db_env: Session, settings: Settings) -> None:
     """正常大小的输入不该被拦。"""
     settings.LLM_MAX_INPUT_TOKENS = 24000
     settings.LLM_MAX_RETRIES = 0
@@ -402,9 +386,7 @@ def test_input_token_guard_allows_normal_input(
     assert calls["n"] == 1
 
 
-def test_retry_respects_total_budget_deadline(
-    db_env: Session, settings: Settings
-) -> None:
+def test_retry_respects_total_budget_deadline(db_env: Session, settings: Settings) -> None:
     """总预算不够覆盖退避时，必须**放弃重试**而不是继续耗下去。"""
     settings.LLM_MAX_RETRIES = 3
     settings.LLM_SCHEMA_REPAIR_ATTEMPTS = 0
@@ -441,9 +423,7 @@ def test_priced_cost_aggregates_across_retries(db_env: Session, settings: Settin
 
     settings.LLM_MAX_RETRIES = 1
     settings.LLM_SCHEMA_REPAIR_ATTEMPTS = 0
-    original, calls = _install_sequence(
-        [({"error": "boom"}, 503), (_success_payload(), 200)]
-    )
+    original, calls = _install_sequence([({"error": "boom"}, 503), (_success_payload(), 200)])
 
     try:
         analysis_worker.generate_report({"indicators": {}}, settings, db=db_env)
@@ -491,9 +471,7 @@ class TestMissingAgentMarking:
         assert "Schema 修复仍失败" in (row.degraded_reason or "")
         assert row.error["code"] == "LLM_SCHEMA_INVALID"
 
-    def test_missing_agent_writes_no_output_row(
-        self, db_env: Session, settings: Settings
-    ) -> None:
+    def test_missing_agent_writes_no_output_row(self, db_env: Session, settings: Settings) -> None:
         """**没有输出就没有输出行**——不能塞占位空对象假装有输出。"""
         analysis_worker.record_missing_agent(
             db_env,

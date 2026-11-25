@@ -18,6 +18,8 @@ import datetime as dt
 import json
 import time
 import uuid
+from collections.abc import Iterator
+from contextlib import contextmanager
 from datetime import timedelta
 from decimal import Decimal
 from pathlib import Path
@@ -79,6 +81,11 @@ from aicrypto.services.llm_retry import (
     summarize_validation_issues,
 )
 from aicrypto.services.market import candle_payload
+from aicrypto.services.partial_result import (
+    DEGRADED_REASON_FAILED,
+    DEGRADED_REASON_TIMEOUT,
+    build_partial_content,
+)
 from aicrypto.services.tier_routing import (
     TierFallbackReason,
     resolve_tier_route,
@@ -93,6 +100,34 @@ PROMPT_AGENT_NAME = "master"
 PROMPT_SYSTEM_TEMPLATE = "analysis"
 #: 用户提示模板名
 PROMPT_USER_TEMPLATE = "analysis.user"
+
+
+@contextmanager
+def report_scope(settings: Settings) -> Iterator[Any]:
+    """报告与运行状态的事务范围。
+
+    与计量分开——见 ``process_one`` 里关于 L-24 的说明。
+    """
+    with session_scope(settings) as db:
+        yield db
+
+
+@contextmanager
+def metering_scope(settings: Settings) -> Iterator[Any]:
+    """计量的独立事务范围。
+
+    与报告事务**分开**：失败尝试同样消耗 token、同样要计费。
+    若两者同事务，模型调用失败时异常穿出事务、
+    **同事务里的计量行一起被回滚销毁**——
+    失败烧掉的钱从来没进过账本，成本报表**系统性低估**，
+    而且「越是模型不稳定的时候低估得越多」，
+    恰好是你最需要看清成本的时候。
+
+    **每次尝试独立提交**（见 ``generate_report`` 的 ``commit_metering``）：
+    即使第 3 次尝试把进程搞崩了，前 2 次的账也已经记上了。
+    """
+    with session_scope(settings) as db:
+        yield db
 
 
 def claim_run(settings: Settings) -> str | None:
@@ -404,11 +439,17 @@ def record_model_run(
     agent_name: str | None = None,
     tier: str | None = None,
     pricing: PricingEntry | None = None,
+    commit: bool = False,
 ) -> str:
     """写入 ``model_runs`` 与 ``llm_cost_records``，返回 ``model_run_id``。
 
     **两个表在同一个事务里写**：成本记录引用 ``model_run_id``，
     分开写会出现「有调用记录但没费用」或反之的孤立行。
+
+    ``commit=True`` 时**立即提交**——用于让计量独立于报告事务存活
+    （见 ``_record_attempt`` 里关于 L-24 的说明）。
+    提交后仍然保持「两表同事务」的原子性：
+    它们要么一起进库，要么一起回滚。
     """
     model_run_id = f"mrun_{uuid.uuid4().hex}"
     created_at = now()
@@ -468,6 +509,12 @@ def record_model_run(
         latency_ms=latency_ms,
         cost_usd=estimate.cost_usd,
     )
+    if commit:
+        # **立即提交**：计量必须独立于报告事务存活（L-24）。
+        # 报告写失败时整个事务回滚，同事务里的计量行会一起消失——
+        # 失败尝试烧掉的 token 与费用从来没进过账本，
+        # 成本报表因此**系统性低估**。
+        db.commit()
     return model_run_id
 
 
@@ -572,9 +619,7 @@ def register_prompt_version(
             created_at=now(),
             change_note=change_note,
         )
-        .on_conflict_do_nothing(
-            index_elements=["agent_name", "template_name", "prompt_version"]
-        )
+        .on_conflict_do_nothing(index_elements=["agent_name", "template_name", "prompt_version"])
     )
     db.execute(stmt)
 
@@ -676,6 +721,7 @@ def _record_attempt(
     retry_count: int,
     error: dict[str, Any] | None,
     tier: str,
+    commit: bool = False,
 ) -> None:
     """记录一次 HTTP 尝试。
 
@@ -684,6 +730,11 @@ def _record_attempt(
 
     ``tier`` 传的是**实际生效**的档位（降级后可能低于请求的档位），
     成本报表按档位分组靠的就是这一列。
+
+    ``commit=True`` 时**立即提交**——用于让计量独立于报告事务存活
+    （见 ``metering_scope`` 里关于 L-24 的说明）。
+    提交后仍然保持「``model_runs`` 与 ``llm_cost_records`` 同事务」
+    的原子性：它们要么一起进库，要么一起回滚。
     """
     record_model_run(
         db,
@@ -699,6 +750,7 @@ def _record_attempt(
         agent_name=PROMPT_AGENT_NAME,
         tier=tier,
         pricing=resolve_pricing(db, model_id=model, as_of=now()),
+        commit=commit,
     )
 
 
@@ -722,6 +774,7 @@ def generate_report(
     tier: ModelTier = ModelTier.TIER_STANDARD,
     prefer_local: bool = False,
     call_info: dict[str, Any] | None = None,
+    commit_metering: bool = False,
 ) -> tuple[AnalysisReportContent, str, str]:
     """调用模型生成报告。
 
@@ -841,6 +894,7 @@ def generate_report(
                     "retryable": retryable,
                 },
                 tier=tier_label,
+                commit=commit_metering,
             )
             # **本地模型不可用 -> 回退云端**（PRD 24.3）。
             # 回退后**必须在输出中标注 degraded**——静默降级最危险：
@@ -914,7 +968,8 @@ def generate_report(
                     latency_ms=latency_ms,
                     retry_count=attempt - 1,
                     error={"stage": "output_validation", "issues": issues},
-                tier=tier_label,
+                    tier=tier_label,
+                    commit=commit_metering,
                 )
                 last_error = AICryptoError(
                     ErrorCode.LLM_SCHEMA_INVALID,
@@ -945,7 +1000,8 @@ def generate_report(
                     latency_ms=latency_ms,
                     retry_count=attempt - 1,
                     error={"stage": "response_envelope"},
-                tier=tier_label,
+                    tier=tier_label,
+                    commit=commit_metering,
                 )
                 last_error = AICryptoError(
                     ErrorCode.LLM_SCHEMA_INVALID, details={"stage": "response_envelope"}
@@ -976,6 +1032,7 @@ def generate_report(
                 retry_count=attempt - 1,
                 error=None,
                 tier=tier_label,
+                commit=commit_metering,
             )
             register_prompt_version(db, template=system_template, change_note="初始版本")
             register_prompt_version(db, template=user_template, change_note="初始版本")
@@ -1007,10 +1064,9 @@ def generate_report(
                 retry_count=attempt - 1,
                 error={"stage": "output_truncated"},
                 tier=tier_label,
+                commit=commit_metering,
             )
-            raise AICryptoError(
-                ErrorCode.LLM_SCHEMA_INVALID, details={"stage": "output_truncated"}
-            )
+            raise AICryptoError(ErrorCode.LLM_SCHEMA_INVALID, details={"stage": "output_truncated"})
 
         if outcome is AttemptOutcome.RETRYABLE:
             status = "RATE_LIMITED" if response.status_code == 429 else "FAILED"
@@ -1026,6 +1082,7 @@ def generate_report(
                 retry_count=attempt - 1,
                 error={"stage": "provider_http", "http_status": response.status_code},
                 tier=tier_label,
+                commit=commit_metering,
             )
             if should_retry(
                 outcome=outcome,
@@ -1057,7 +1114,8 @@ def generate_report(
             latency_ms=latency_ms,
             retry_count=attempt - 1,
             error={"stage": "provider_http", "http_status": response.status_code},
-                tier=tier_label,
+            tier=tier_label,
+            commit=commit_metering,
         )
         if response.status_code == 400:
             raise AICryptoError(
@@ -1135,12 +1193,28 @@ def process_one(settings: Settings) -> bool:
     # 还不如早点失败、把「已完成的部分」交出去。
     deadline = now() + dt.timedelta(seconds=settings.LLM_ANALYSIS_TOTAL_BUDGET_SECONDS)
     snapshot: dict[str, Any] | None = None
+    # 部分结果需要的上下文。**在 try 外声明**：超时/失败的处理
+    # 在 except 分支里，而快照可能已经在 try 里建好了。
+    tier = ModelTier.TIER_STANDARD
+    call_info: dict[str, Any] = {}
     try:
         snapshot = build_snapshot(run_id, settings)
-        # 计量写入与报告创建在**同一个事务**里：成本记录引用 model_run_id，
-        # 报告的 versions 引用 model_id / prompt_version，三者要么一起成功、
-        # 要么一起回滚，不允许出现「有报告无成本」或「有成本无报告」。
-        with session_scope(settings) as db:
+        # **报告与计量分两个事务**（L-24）。
+        #
+        # 报告、运行状态走 ``report_scope``；
+        # **计量走独立的 ``metering_scope``**，各自独立提交。
+        #
+        # 为什么必须分开：失败尝试同样消耗 token、同样要计费。
+        # 若两者同事务，模型调用失败时异常穿出事务、
+        # **同事务里的计量行一起被回滚销毁**——
+        # 失败烧掉的钱从来没进过账本，成本报表**系统性低估**，
+        # 而且「越是模型不稳定的时候低估得越多」，
+        # 恰好是你最需要看清成本的时候。
+        #
+        # 代价是「有调用记录但没报告」的状态可能出现——
+        # 但那**恰恰是真实发生过的事**（调了、钱花了、报告没写成），
+        # 比悄悄抹掉更诚实。
+        with report_scope(settings) as db:
             # **档位由触发来源决定**（PRD 24.1 / 24.3）：
             # 复盘 / 日报 / 分歧复盘走 DEEP，其余走 STANDARD。
             run_row = db.get(AnalysisRunRecord, run_id)
@@ -1150,15 +1224,16 @@ def process_one(settings: Settings) -> bool:
                 trigger,
                 retrospective=analysis_mode == AnalysisMode.RETROSPECTIVE,
             )
-            call_info: dict[str, Any] = {}
-            content, model_id, prompt_version = generate_report(
-                snapshot,
-                settings,
-                db=db,
-                deadline=deadline,
-                tier=tier,
-                call_info=call_info,
-            )
+            with metering_scope(settings) as meter_db:
+                content, model_id, prompt_version = generate_report(
+                    snapshot,
+                    settings,
+                    db=meter_db,
+                    deadline=deadline,
+                    tier=tier,
+                    call_info=call_info,
+                    commit_metering=True,
+                )
             if time.monotonic() - started > settings.LLM_ANALYSIS_TOTAL_BUDGET_SECONDS:
                 raise TimeoutError("分析任务超过总时限")
             create_report(
@@ -1181,31 +1256,72 @@ def process_one(settings: Settings) -> bool:
         # 每项任务单独落终态；不记录模型密钥、请求头或原始响应。
         code = exc.code if isinstance(exc, AICryptoError) else ErrorCode.LLM_SCHEMA_INVALID
         status = "FAILED"
-        if isinstance(exc, httpx.RequestError):
-            code = ErrorCode.LLM_UNAVAILABLE
-        if isinstance(exc, (httpx.TimeoutException, TimeoutError)):
+        if isinstance(exc, httpx.TimeoutException):
+            code, status = ErrorCode.LLM_TIMEOUT, "TIMEOUT"
+        if isinstance(exc, TimeoutError):
+            code, status = ErrorCode.LLM_TIMEOUT, "TIMEOUT"
+        # **超时可能被包成了 AICryptoError**（``generate_report`` 把
+        # ``httpx.ReadTimeout`` 翻译成 ``AICryptoError(LLM_TIMEOUT)``）。
+        # 只看异常类型会漏掉它——那会把超时报告标成「模型调用失败」，
+        # **降级原因与真实原因不符**，运维按错误码排查会找错方向。
+        if isinstance(exc, AICryptoError) and exc.code == ErrorCode.LLM_TIMEOUT:
             code, status = ErrorCode.LLM_TIMEOUT, "TIMEOUT"
         if isinstance(exc, AICryptoError) and exc.code == ErrorCode.LLM_SCHEMA_INVALID:
             # **修复也失败**：该 Agent 的输出视为缺失，绝不伪造（PRD 32.4）。
             # 报告不会生成——宁可没有结论，也不要一个编出来的结论。
             status = "FAILED"
-        with session_scope(settings) as db:
-            db.execute(
-                update(AnalysisRunRecord)
-                .where(
-                    AnalysisRunRecord.run_id == run_id,
-                    AnalysisRunRecord.status == "RUNNING",
-                )
-                .values(
-                    status=status,
-                    finished_at=now(),
-                    error={
-                        "code": str(code),
-                        "exception_type": type(exc).__name__,
-                        "details": exc.details if isinstance(exc, AICryptoError) else {},
-                    },
-                )
+
+        # ---- 部分结果（PRD 24.4）----
+        # 「全流程超时预算用尽时，输出『分析超时 + 已完成部分』，
+        # 而不是整体失败」。
+        #
+        # **关键前提**：快照必须已经建好。快照里是**程序算出来的
+        # 确定性事实**（指标、结构、regime、支撑阻力位）——
+        # 那些是真正「已完成的部分」。没有快照就没什么可交的，
+        # 只能整体失败。
+        #
+        # **Schema 修复失败是例外**：那时模型其实**跑完了**，
+        # 只是输出不合法。它的「已完成部分」不是快照里的确定性事实，
+        # 而是模型给出（但不合规）的输出——那份输出无法通过校验，
+        # 拿它拼一份部分报告等于把不可信内容洗成「部分可信」。
+        # 所以这种情况仍然 FAILED，并且如实登记「Agent 缺失」。
+        published_partial = False
+        if (
+            snapshot is not None
+            and status in {"TIMEOUT", "FAILED"}
+            and not (isinstance(exc, AICryptoError) and exc.code == ErrorCode.LLM_SCHEMA_INVALID)
+        ):
+            published_partial = _publish_partial_report(
+                settings,
+                run_id=run_id,
+                snapshot=snapshot,
+                error_code=str(code),
+                timeout=status == "TIMEOUT",
+                exception=exc,
+                tier=tier,
+                call_info=call_info,
             )
+            if published_partial:
+                status = "PARTIAL"
+
+        with session_scope(settings) as db:
+            if not published_partial:
+                db.execute(
+                    update(AnalysisRunRecord)
+                    .where(
+                        AnalysisRunRecord.run_id == run_id,
+                        AnalysisRunRecord.status == "RUNNING",
+                    )
+                    .values(
+                        status=status,
+                        finished_at=now(),
+                        error={
+                            "code": str(code),
+                            "exception_type": type(exc).__name__,
+                            "details": exc.details if isinstance(exc, AICryptoError) else {},
+                        },
+                    )
+                )
             # **修复也失败**（Schema 仍不合法）：如实登记「Agent 缺失」，
             # 绝不伪造一份输出顶上去（PRD 32.4）。
             if (
@@ -1232,8 +1348,97 @@ def process_one(settings: Settings) -> bool:
                             "details": exc.details,
                         },
                     )
-        logger.warning("analysis_failed", run_id=run_id, code=str(code))
+        logger.warning(
+            "analysis_failed",
+            run_id=run_id,
+            code=str(code),
+            partial_result=published_partial,
+            exception_type=type(exc).__name__,
+            details=exc.details if isinstance(exc, AICryptoError) else {},
+        )
     return True
+
+
+def _publish_partial_report(
+    settings: Settings,
+    *,
+    run_id: str,
+    snapshot: dict[str, Any],
+    error_code: str,
+    timeout: bool,
+    exception: BaseException,
+    tier: ModelTier,
+    call_info: dict[str, Any],
+) -> bool:
+    """发布「已完成部分」的部分报告（PRD 24.4）。
+
+    返回 ``True`` 表示发布成功（调用方应把运行状态置为 ``PARTIAL``），
+    ``False`` 表示发布失败（调用方按原样落终态）。
+
+    **失败不能被吞掉**：部分报告发布失败（比如证据校验不通过）时
+    返回 ``False``，让调用方照常落 ``FAILED``/``TIMEOUT`` 终态。
+    **绝不能因为「想给个部分结果」而把任务变成「成功但没结果」**——
+    那比明确失败更糟：调用方以为有报告，实际没有。
+    """
+    snapshot_id = snapshot.get("snapshot_id")
+    if not snapshot_id:
+        return False
+    try:
+        content = build_partial_content(
+            snapshot,
+            snapshot_id=str(snapshot_id),
+            failure_reason=_describe_failure(exception, timeout=timeout),
+            error_code=error_code,
+            timeout=timeout,
+            time_horizon="4h",
+            as_of=now(),
+        )
+        with session_scope(settings) as db:
+            create_report(
+                db,
+                run_id=run_id,
+                market_snapshot_id=str(snapshot_id),
+                content=content,
+                status=AnalysisRunStatus.PARTIAL,
+                now=now(),
+                versions={
+                    "model_id": str(call_info.get("model_id", "")),
+                    "prompt_version": "",
+                    "feature_version": FEATURE_VERSION,
+                    "tier": str(call_info.get("tier", tier)),
+                    "requested_tier": str(call_info.get("requested_tier", tier)),
+                },
+                degraded_reason=(DEGRADED_REASON_TIMEOUT if timeout else DEGRADED_REASON_FAILED),
+            )
+    except Exception as publish_exc:
+        logger.warning(
+            "partial_result_publish_failed",
+            run_id=run_id,
+            error_code=error_code,
+            exception_type=type(publish_exc).__name__,
+        )
+        return False
+    logger.info(
+        "partial_result_published",
+        run_id=run_id,
+        error_code=error_code,
+        timeout=timeout,
+    )
+    return True
+
+
+def _describe_failure(exception: BaseException, *, timeout: bool) -> str:
+    """把异常翻译成人类可读的失败原因（写进部分报告的 summary）。"""
+    if isinstance(exception, AICryptoError):
+        details = exception.details or {}
+        stage = details.get("stage")
+        base = f"{exception.code}"
+        if stage:
+            return f"{base}（失败阶段：{stage}）"
+        return base
+    if timeout:
+        return f"{type(exception).__name__}: {exception}"
+    return f"{type(exception).__name__}: {exception}"
 
 
 def main() -> None:

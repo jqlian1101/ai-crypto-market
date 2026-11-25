@@ -146,16 +146,12 @@ def test_concurrent_workers_with_retries_account_exactly(
                         effective_from=dt.datetime(2020, 1, 1, tzinfo=dt.UTC),
                         created_at=dt.datetime(2020, 1, 1, tzinfo=dt.UTC),
                     )
-                    .on_conflict_do_nothing(
-                        index_elements=["model_id", "pricing_version"]
-                    )
+                    .on_conflict_do_nothing(index_elements=["model_id", "pricing_version"])
                 )
                 db.commit()
 
             with Session(engine) as db:
-                analysis_worker.generate_report(
-                    {"indicators": {}}, settings, db=db
-                )
+                analysis_worker.generate_report({"indicators": {}}, settings, db=db)
                 db.commit()
         except BaseException as exc:
             errors.append(exc)
@@ -189,9 +185,7 @@ def test_concurrent_workers_with_retries_account_exactly(
             assert len(runs) == expected, (
                 f"应有 {expected} 行 model_runs（4 worker x 3 次尝试），实际 {len(runs)}"
             )
-            assert len(costs) == expected, (
-                f"应有 {expected} 行 llm_cost_records，实际 {len(costs)}"
-            )
+            assert len(costs) == expected, f"应有 {expected} 行 llm_cost_records，实际 {len(costs)}"
 
             # ---- 一一对应，无孤儿 ----
             run_ids = {r.model_run_id for r in runs}
@@ -215,9 +209,9 @@ def test_concurrent_workers_with_retries_account_exactly(
             # 但**每一行的 retry_count 必须在 [0, RETRIES] 内**，
             # 且每个 worker 恰好有且仅有一行 retry_count=0/1/2。
             retry_counts = sorted(r.retry_count for r in runs)
-            assert retry_counts == sorted(
-                [0, 1, 2] * WORKERS
-            ), f"retry_count 分布错误：{retry_counts}"
+            assert retry_counts == sorted([0, 1, 2] * WORKERS), (
+                f"retry_count 分布错误：{retry_counts}"
+            )
             assert all(0 <= r.retry_count <= RETRIES for r in runs), (
                 "retry_count 不得超出配置的 LLM_MAX_RETRIES"
             )
@@ -248,16 +242,10 @@ def test_concurrent_workers_with_retries_account_exactly(
         httpx.Client = original_client  # type: ignore[assignment]
         with Session(engine) as clean:
             clean.execute(
-                LLMCostRecord.__table__.delete().where(
-                    LLMCostRecord.model_id == model_id
-                )
+                LLMCostRecord.__table__.delete().where(LLMCostRecord.model_id == model_id)
             )
-            clean.execute(
-                ModelRun.__table__.delete().where(ModelRun.model_id == model_id)
-            )
-            clean.execute(
-                ModelPricing.__table__.delete().where(ModelPricing.model_id == model_id)
-            )
+            clean.execute(ModelRun.__table__.delete().where(ModelRun.model_id == model_id))
+            clean.execute(ModelPricing.__table__.delete().where(ModelPricing.model_id == model_id))
             clean.commit()
         engine.dispose()
 
@@ -337,24 +325,16 @@ def test_concurrent_retry_does_not_duplicate_prompt_versions(
                 f"两个模板都必须登记，实际 {names}："
                 f"{[(v.agent_name, v.template_name, v.prompt_version) for v in versions]}"
             )
-            assert len(versions) == 2, (
-                f"应恰好 2 行（两个模板各一行），实际 {len(versions)}"
-            )
+            assert len(versions) == 2, f"应恰好 2 行（两个模板各一行），实际 {len(versions)}"
             # 幂等：4 个 worker x 2 次登记 = 8 次插入，但只有 2 行
-            keys = {
-                (v.agent_name, v.template_name, v.prompt_version) for v in versions
-            }
+            keys = {(v.agent_name, v.template_name, v.prompt_version) for v in versions}
             assert len(keys) == 2, "同一模板版本只应有一行"
     finally:
         httpx.Client = original_client  # type: ignore[assignment]
         with Session(engine) as clean:
+            clean.execute(ModelRun.__table__.delete().where(ModelRun.model_id == model_id))
             clean.execute(
-                ModelRun.__table__.delete().where(ModelRun.model_id == model_id)
-            )
-            clean.execute(
-                LLMCostRecord.__table__.delete().where(
-                    LLMCostRecord.model_id == model_id
-                )
+                LLMCostRecord.__table__.delete().where(LLMCostRecord.model_id == model_id)
             )
             clean.commit()
         engine.dispose()

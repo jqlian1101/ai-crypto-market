@@ -267,9 +267,7 @@ def test_prompt_version_registered_with_matching_hash(db_env: Session, settings:
     assert system_row.template_name == "analysis"
 
 
-def test_both_prompt_templates_are_registered(
-    db_env: Session, settings: Settings
-) -> None:
+def test_both_prompt_templates_are_registered(db_env: Session, settings: Settings) -> None:
     """**回归（L-22）**：system 与 user 两个模板**都必须登记**。
 
     曾经的缺陷：``prompt_versions`` 主键是 ``(agent_name, prompt_version)``，
@@ -323,10 +321,7 @@ def test_prompt_version_registration_is_idempotent(db_env: Session, settings: Se
 
     versions = list(db_env.scalars(select(PromptVersion)))
     # 同一 (agent, template, version) 只应有一行
-    keys = {
-        (item.agent_name, item.template_name, item.prompt_version)
-        for item in versions
-    }
+    keys = {(item.agent_name, item.template_name, item.prompt_version) for item in versions}
     assert len(keys) == len(versions), "同一模板版本只应有一行"
 
 
