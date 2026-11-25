@@ -2,7 +2,7 @@
 
 > 状态说明：`[x]` 表示已实现**且有测试覆盖**；`[ ]` 表示未做或未验证。
 > 最近一次核对（2026-11-25）：P0 / P1 / P2 / P3 主体已完成，
-> 后端测试 **930 passed / 0 skipped**（本地 Postgres 16 + Redis 7 跑通全部集成测试）。
+> 后端测试 **933 passed / 0 skipped**（本地 Postgres 16 + Redis 7 跑通全部集成测试）。
 > P4 已完成「Prompt 外置 + 模型调用计量 + 单价表接入 + 模型分层 +
 > **超时部分结果**」，多 Agent 拆分待做。
 >
@@ -181,8 +181,17 @@
       `test_both_prompt_templates_are_registered`
       + `tests/integration/test_llm_retry_concurrency.py` 新增
       `test_concurrent_retry_does_not_duplicate_prompt_versions`
+      + `tests/integration/test_prompt_versions_backfill.py`（3 项，新增）
       + 真实 HTTP 端到端 10/10（两个模板哈希与磁盘逐一比对一致）
       + 迁移 up/down/全新库 全链可逆
+      ——**二次验证再修复 1 个缺陷**：回填漏剥 `.j2` 后缀，
+      会回填出 `analysis.v1.j2` 这种**带版本号的模板名**，
+      主键语义直接错了（同模板的 v1/v2 会被当成两个模板）。
+      PRD 24.5 明确允许 `.j2`（或 `.md`）两种形态。
+      **回填分支只在「表里已有数据」时才走到**——
+      全新库迁移正常**不代表**迁移正确。
+      为此把回填表达式**提取成迁移模块的公开常量**，
+      测试**直接引用实现**而非抄 SQL 副本。
 - [x] 输出携带 `model_id`、`prompt_version`、`agent_version`
       ——`analysis_reports.versions` 不再是 `{}`，现写入
       `model_id` / `prompt_version` / `feature_version`。

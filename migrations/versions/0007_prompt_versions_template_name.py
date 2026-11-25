@@ -32,6 +32,30 @@ depends_on: str | None = None
 _OLD_PK = "pk_prompt_versions"
 _NEW_PK = "pk_prompt_versions"
 
+#: 从 ``template_path`` 反推 ``template_name`` 的 SQL **表达式**（不含 SELECT）。
+#:
+#: **提取成模块级常量，是为了让回归测试能直接引用它**
+#: （见 ``tests/integration/test_prompt_versions_backfill.py``）。
+#: 此前测试里抄了一份 SQL 副本——改迁移时忘改测试，
+#: 就会留下「测试全绿但迁移已经错了」的假象。
+#: **一份实现只能有一个来源**。
+#:
+#: 规则：先剥扩展名（``.md`` / ``.j2``），再剥 ``.v<n>`` 版本号。
+#: 不能用 ``split_part(..., '.', 1)`` 取第一段——
+#: 那样 ``analysis.user.v1.md`` 会得到 ``analysis``（丢掉 ``.user``）。
+BACKFILL_TEMPLATE_NAME_EXPR = """
+            regexp_replace(
+                regexp_replace(
+                    split_part({path_expr}, '/', 3),
+                    '\\.(md|j2)$', ''
+                ),
+                '\\.v[0-9]+$', ''
+            )
+"""
+
+#: 同上，但用于**测试**的 SELECT 形式。
+BACKFILL_TEMPLATE_NAME_SQL = "SELECT " + BACKFILL_TEMPLATE_NAME_EXPR.format(path_expr=":path")
+
 
 def upgrade() -> None:
     # 1. 加列（先加后迁移，避免 NOT NULL 约束在已有数据上失败）
@@ -44,22 +68,21 @@ def upgrade() -> None:
     #    路径形如 ``prompts/master/analysis.v1.md`` -> ``analysis``；
     #    ``prompts/master/analysis.user.v1.md`` -> ``analysis.user``。
     #
-    #    **必须先剥掉 .md 后缀，再剥 .v<n> 版本号**：
+    #    **必须先剥掉扩展名，再剥 .v<n> 版本号**：
     #    直接用 ``split_part(..., '.', 1)`` 会在带点的模板名上截断——
     #    ``analysis.user.v1.md`` 会得到 ``analysis``（丢掉 ``.user``）。
+    #
+    #    **扩展名必须同时处理 ``.md`` 与 ``.j2``**：PRD 24.5 明确允许
+    #    ``prompts/<agent>/<template>.v{n}.j2``（或 ``.md``）两种形态。
+    #    只剥 ``.md`` 的话，``.j2`` 文件会回填出 ``analysis.v1.j2``
+    #    这种**带版本号的模板名**——主键语义直接错了：
+    #    同一个模板的 ``v1`` 与 ``v2`` 会被当成**两个不同的模板**，
+    #    恰好制造出本次修复要消灭的那类「该在的东西不在」问题。
     op.execute(
         sa.text(
-            """
-            UPDATE prompt_versions
-            SET template_name = regexp_replace(
-                regexp_replace(
-                    split_part(template_path, '/', 3),
-                    '\\.md$', ''
-                ),
-                '\\.v[0-9]+$', ''
-            )
-            WHERE template_name IS NULL
-            """
+            "UPDATE prompt_versions SET template_name = "
+            + BACKFILL_TEMPLATE_NAME_EXPR.format(path_expr="template_path")
+            + " WHERE template_name IS NULL"
         )
     )
     # 回填后仍为空的（路径异常）给一个占位值，避免 NULL 破坏 NOT NULL
