@@ -18,6 +18,7 @@ from __future__ import annotations
 import datetime as dt
 import os
 import threading
+from collections.abc import Iterator
 from decimal import Decimal
 
 import httpx
@@ -52,10 +53,26 @@ def _success_payload() -> dict:
 
 
 @pytest.fixture
-def concurrent_settings() -> Settings:
+def db_env() -> Iterator[str]:
+    """真库连接串；未配置测试库则**跳过**而不是报错。
+
+    此前这里用的是 ``os.getenv("ANALYSIS_TEST_DATABASE_URL", "")`` 的空串兜底，
+    空串会让 ``Settings`` 校验失败并抛 ``ValidationError``——
+    测试变成 **ERROR**（收集期错误）而不是 **SKIPPED**，
+    掩盖了「未配置测试库」这个真实原因。
+    口径统一为仓库其它集成测试文件的写法：``getenv`` 无默认值 + 显式 skip。
+    """
+    url = os.getenv("ANALYSIS_TEST_DATABASE_URL")
+    if not url:
+        pytest.skip("设置 ANALYSIS_TEST_DATABASE_URL 以执行 PostgreSQL 集成测试")
+    yield url
+
+
+@pytest.fixture
+def concurrent_settings(db_env: str) -> Settings:
     return Settings(
         _env_file=None,
-        DATABASE_URL=os.getenv("ANALYSIS_TEST_DATABASE_URL", ""),
+        DATABASE_URL=db_env,
         REDIS_URL="redis://127.0.0.1:6379/0",
         AUTH_ENABLED=False,
         LLM_CLOUD_BASE_URL="https://example.invalid/v1",
@@ -65,6 +82,7 @@ def concurrent_settings() -> Settings:
 
 
 def test_prompt_version_registration_is_atomic_under_concurrency(
+    db_env: str,
     concurrent_settings: Settings,
 ) -> None:
     """并发登记同一 Prompt 版本不能撞唯一约束。
@@ -73,7 +91,7 @@ def test_prompt_version_registration_is_atomic_under_concurrency(
     插入者会抛 ``IntegrityError``；修复后走 ``ON CONFLICT DO NOTHING``，
     所有人都能安全通过。
     """
-    url = os.getenv("ANALYSIS_TEST_DATABASE_URL", "")
+    url = db_env
     engine = create_engine(url)
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -132,10 +150,11 @@ def test_prompt_version_registration_is_atomic_under_concurrency(
 
 
 def test_concurrent_measurement_is_not_duplicated_or_lost(
+    db_env: str,
     concurrent_settings: Settings,
 ) -> None:
     """多个 worker 并发跑计量，``model_runs`` / ``llm_cost_records`` 不重不漏。"""
-    url = os.getenv("ANALYSIS_TEST_DATABASE_URL", "")
+    url = db_env
     engine = create_engine(url)
     model_id = "concurrent-meter-model"
 

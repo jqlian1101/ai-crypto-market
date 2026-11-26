@@ -3,7 +3,7 @@ name = "aicrypto-market"
 version = "0.1.0"
 description = "AI Crypto Market Intelligence & Analysis Platform - backend"
 readme = "README.md"
-requires-python = ">=3.12"
+requires-python = ">=3.13"
 license = { text = "MIT" }
 
 dependencies = [
@@ -65,7 +65,7 @@ package = true
 # --- ruff (36.7) ---
 [tool.ruff]
 line-length = 100
-target-version = "py312"
+target-version = "py313"
 src = ["src", "tests"]
 
 [tool.ruff.lint]
@@ -98,7 +98,7 @@ known-first-party = ["aicrypto"]
 
 # --- mypy (36.7) ---
 [tool.mypy]
-python_version = "3.12"
+python_version = "3.13"
 files = ["src"]
 strict = false
 warn_unused_configs = true

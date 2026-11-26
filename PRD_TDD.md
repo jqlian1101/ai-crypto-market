@@ -5667,7 +5667,7 @@ LLM 不确定性要求**不测输出内容，测输出结构与失败处理**。
 
 | 项 | 规则 |
 |---|---|
-| Python | Python 3.12+；`ruff`（lint + format）；`mypy --strict`（核心模块）/ 默认（非核心） |
+| Python | Python 3.13+；`ruff`（lint + format）；`mypy --strict`（核心模块）/ 默认（非核心） |
 | 行宽 | 100 |
 | 类型 | **所有函数签名有类型注解**；`Any` 必须显式注释理由 |
 | 命名 | 模块/函数 `snake_case`，类 `PascalCase`，常量 `UPPER_SNAKE` |

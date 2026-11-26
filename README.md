@@ -106,7 +106,7 @@ python scripts/sync_model_pricing.py
 
 | 组件 | 版本 | 说明 |
 |---|---|---|
-| Python | >= 3.12 | 推荐 3.12（`.python-version`） |
+| Python | >= 3.13 | 推荐 3.13（`.python-version`） |
 | Node.js | >= 20 | 已验证 24.x |
 | Docker Desktop | 任意近期版本 | 只用于跑 PostgreSQL / Redis |
 | PostgreSQL | 16 | 可由 `docker compose` 提供 |
@@ -123,7 +123,7 @@ python scripts/sync_model_pricing.py
 | 项 | 版本 | 说明 |
 |---|---|---|
 | macOS | 26.6.2 (arm64) | Apple M4 / 10 核 / 16 GB |
-| Python | 3.12.11 | 由 `uv` 提供，见下方命令 |
+| Python | 3.13 | 由 `uv` 提供，见下方命令 |
 | Node.js | 24.12.0 | npm 走 `registry.npmmirror.com` |
 | Docker | 29.3.1 + Compose v5.1.1 | 容器走 `docker.m.daocloud.io` |
 
@@ -135,13 +135,13 @@ python scripts/sync_model_pricing.py
 > `api.binance.com` 返回 403。即 **futures WS 与现货 REST 无法在本机端到端验证**
 > （见 `docs/遗留问题.md` L-08 / L-09），需换网络环境补验。
 
-创建 Python 环境（`uv` 可离线复用已缓存的 3.12 解释器）：
+创建 Python 环境（`uv` 可离线复用已缓存的 3.13 解释器）：
 
 ```bash
 # uv 装在 conda env 里；也可自行安装
 export PATH="/opt/anaconda3/envs/agent/bin:$PATH"
 
-uv venv --python 3.12 .venv
+uv venv --python 3.13 .venv
 uv pip install --python .venv/bin/python -e ".[dev]" \
   --index-url https://pypi.tuna.tsinghua.edu.cn/simple
 ```
@@ -163,7 +163,7 @@ docker compose ps          # 等待两个服务都是 healthy
 
 ```bash
 # 首次：创建虚拟环境并安装依赖
-uv venv --python 3.12 .venv
+uv venv --python 3.13 .venv
 uv pip install --python .venv/bin/python -e ".[dev]" \
   --index-url https://pypi.tuna.tsinghua.edu.cn/simple
 
@@ -235,10 +235,30 @@ npm run dev
 | 迁移回退一版 | `python -m alembic -c migrations/alembic.ini downgrade -1` |
 | 生成新迁移 | `python -m alembic -c migrations/alembic.ini revision --autogenerate -m "描述"` |
 
-> **集成测试需要数据库**：跑全量测试前设置
-> `ANALYSIS_TEST_DATABASE_URL` 与 `ANOMALY_TEST_DATABASE_URL`
-> 两个环境变量指向测试库（见 `docs/遗留问题.md` L-14 关于
-> `127.0.0.1` 与 `localhost` 的连接耗时差异）。
+> **集成测试需要数据库**：`tests/integration/` 下的测试通过
+> `ANALYSIS_TEST_DATABASE_URL` / `ANOMALY_TEST_DATABASE_URL` 两个**进程环境变量**
+> 定位测试库。
+>
+> `tests/integration/conftest.py` 会按以下优先级自动解析并注入这两个变量：
+>
+> | 优先级 | 来源 |
+> |---|---|
+> | 1 | 进程环境变量（CI 走这条——`ci.yml` 的 `env:` 段直接注入） |
+> | 2 | 项目根目录 `.env` 的 `DATABASE_URL` |
+> | 3 | 默认值 `postgresql+psycopg://aicrypto:aicrypto@127.0.0.1:5432/aicrypto` |
+>
+> 所以本地通常**不需要**手动设置——只要 `docker compose up -d` 起好了容器，
+> 集成测试就会自动连上本机的 PG 16 并**真跑**（不再是 skip）。
+>
+> 数据库连不上时，测试**跳过**而不是报错（探活超时设了 2 秒，
+> 不会像 psycopg 默认那样干等 140 秒）。
+>
+> > ⚠️ **不要用「在 `.env` 里配测试库」的做法**：
+> > `.env` 由 pydantic-settings 读取，它**不会**把值写回 `os.environ`，
+> > 而集成测试读的是 `os.getenv()`——配了也无效。
+> > 上面第 2 条优先级由 `conftest.py` 主动解析 `.env` 文件绕过这一点。
+>
+> 另见 `docs/遗留问题.md` L-14 关于 `127.0.0.1` 与 `localhost` 的连接耗时差异。
 
 ### 采集进程
 

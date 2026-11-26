@@ -46,9 +46,19 @@ def db_env():
 
 
 def _settings(**kwargs) -> Settings:
+    """构造被测用的 Settings。
+
+    未配置测试库时**跳过**而不是抛 ``ValidationError``——
+    空串会让 ``Settings`` 校验失败，测试变成 ERROR 而非 SKIPPED。
+    （本文件的调用方都依赖 ``db_env`` fixture，正常路径下 skip 已先触发；
+    这里再加一道防御，避免将来新增不依赖 ``db_env`` 的用例时踩坑。）
+    """
+    url = os.getenv("ANALYSIS_TEST_DATABASE_URL")
+    if not url:
+        pytest.skip("设置 ANALYSIS_TEST_DATABASE_URL 以执行 PostgreSQL 集成测试")
     base = {
         "_env_file": None,
-        "DATABASE_URL": os.getenv("ANALYSIS_TEST_DATABASE_URL", ""),
+        "DATABASE_URL": url,
         "REDIS_URL": "redis://127.0.0.1:6379/0",
         "AUTH_ENABLED": False,
         "LLM_CLOUD_BASE_URL": "https://example.invalid/v1",

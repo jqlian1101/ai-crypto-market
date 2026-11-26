@@ -46,7 +46,12 @@ def db_env():
 
 
 @pytest.fixture
-def settings():
+def settings(db_env: Session):
+    """依赖 ``db_env`` 是为了**保证先触发 skip**。
+
+    若直接用 ``os.getenv(..., "")`` 的空串兜底，
+    未配置测试库时会抛 ``ValidationError``（ERROR）而不是跳过（SKIPPED）。
+    """
     from aicrypto.config.settings import Settings
 
     return Settings(
