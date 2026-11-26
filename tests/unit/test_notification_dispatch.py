@@ -20,6 +20,7 @@ from aicrypto.services import notification_dispatch as dispatch
 class FakeSession:
     _rows: list[Any] = field(default_factory=list)
     commits: int = 0
+    mark_kwargs: list[dict[str, Any]] = field(default_factory=list)
 
     def scalars(self, _stmt: Any) -> list[Any]:
         return list(self._rows)
@@ -34,10 +35,11 @@ class Outcome:
     error: str | None = None
 
 
-def _event(fp: str) -> SimpleNamespace:
+def _event(fp: str, revision: int = 0) -> SimpleNamespace:
     return SimpleNamespace(
         anomaly_event_id=f"evt_{fp}",
         fingerprint=fp,
+        revision=revision,
         cooldown_key=f"BTCUSDT:{fp}",
         severity="WARN",
         detected_at=dt.datetime(2026, 11, 20, tzinfo=dt.UTC),
@@ -51,12 +53,14 @@ async def _run(
     outcomes: dict[str, Outcome],
 ) -> tuple[dict[str, int], list[str], FakeSession]:
     marked: list[str] = []
+    mark_kwargs: list[dict[str, Any]] = []
 
     async def fake_deliver(db: Any, redis: Any, event: Any, *, settings: Any) -> Outcome:
         return outcomes[event.fingerprint]
 
-    async def fake_mark(redis: Any, *, fingerprint: str, **_: Any) -> None:
+    async def fake_mark(redis: Any, *, fingerprint: str, **kwargs: Any) -> None:
         marked.append(fingerprint)
+        mark_kwargs.append({"fingerprint": fingerprint, **kwargs})
 
     monkeypatch.setattr(dispatch, "deliver_anomaly", fake_deliver)
     monkeypatch.setattr(dispatch, "mark_delivered", fake_mark)
@@ -67,6 +71,7 @@ async def _run(
         object(),  # type: ignore[arg-type]
         settings=object(),  # type: ignore[arg-type]
     )
+    session.mark_kwargs = mark_kwargs  # type: ignore[attr-defined]
     return counts, marked, session
 
 
@@ -118,3 +123,26 @@ async def test_one_failure_does_not_block_rest_of_batch(
     assert counts == {"SENT": 2, "SUPPRESSED": 0, "FAILED": 1}
     assert marked == ["a", "c"]
     assert session.commits == 3  # 逐条提交，单条失败不影响其余
+
+
+async def test_mark_delivered_uses_event_revision(monkeypatch: pytest.MonkeyPatch) -> None:
+    """L-27：写去重键的 revision 必须等于事件的 revision。
+
+    去重键是 ``(fingerprint, revision)``。若写入时固定用 0，
+    升级投递（revision>0）会写下一个**永远不会被检查**的键——
+    下一轮扫描查不到「已投递」，于是**反复重投**同一事件。
+    """
+    ev = _event("fp_upgraded", revision=1)
+    _, marked, session = await _run(monkeypatch, [ev], {"fp_upgraded": Outcome("SUCCESS")})
+
+    assert marked == ["fp_upgraded"]
+    assert len(session.mark_kwargs) == 1
+    assert session.mark_kwargs[0]["revision"] == 1
+
+
+async def test_zero_revision_is_passed_explicitly(monkeypatch: pytest.MonkeyPatch) -> None:
+    """revision=0 也必须显式传递——不给默认值，避免调用方漏传后静默走错键。"""
+    ev = _event("fp_zero")
+    _, _, session = await _run(monkeypatch, [ev], {"fp_zero": Outcome("SUCCESS")})
+
+    assert session.mark_kwargs[0]["revision"] == 0

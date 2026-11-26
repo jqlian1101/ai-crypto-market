@@ -4,6 +4,14 @@
 - 冷却键 ``cooldown:{cooldown_key}``，TTL 为冷却窗口，值为触发时间（ISO）。
 
 两者键空间独立，且与 ``cache.py`` 的通用 ``lock:`` 前缀隔离。
+
+**revision 必须全程一致**（L-27）：
+
+去重键的语义是 ``(fingerprint, revision)``——同一事件的 AI 解读升级投递
+（``revision > 0``）是**另一次投递**，必须有自己的去重键。
+若「检查时用 event.revision、写入时用 0」，则升级投递永远命中不了
+自己写下的去重键，**每次扫描都会重新投递一遍**（通知轰炸）。
+因此 ``revision`` 必须由调用方显式传入，**本模块不做任何默认值兜底**。
 """
 
 from __future__ import annotations
@@ -21,11 +29,17 @@ def _cooldown_redis_key(cooldown_key: str) -> str:
     return f"{COOLDOWN_PREFIX}{cooldown_key}"
 
 
-async def load_delivered(client: Redis, fingerprints: list[str]) -> set[str]:
-    """批量检查哪些去重键已存在（返回已投递的 dedup 键字符串）。"""
+async def load_delivered(client: Redis, fingerprints: list[str], *, revision: int) -> set[str]:
+    """批量检查哪些去重键已存在（返回已投递的 dedup 键字符串）。
+
+    ``revision`` 必须与写入时使用的 revision 一致，否则检查的是另一个键。
+    **必填、不给默认值**——与 ``mark_delivered`` 口径一致：
+    静默默认 0 会让「升级投递」用首投的键去查，
+    查出「未投递」→ 重复投递（通知轰炸）。
+    """
     if not fingerprints:
         return set()
-    keys = [dedup_key(fp, 0) for fp in fingerprints]
+    keys = [dedup_key(fp, revision) for fp in fingerprints]
     pipe = client.pipeline()
     for key in keys:
         pipe.exists(key)
@@ -49,16 +63,31 @@ async def load_last_fired(client: Redis, cooldown_keys: list[str]) -> dict[str, 
 
 
 async def mark_delivered(
-    client: Redis, *, fingerprint: str, cooldown_key: str, severity: str, fired_at: dt.datetime
+    client: Redis,
+    *,
+    fingerprint: str,
+    revision: int,
+    cooldown_key: str,
+    severity: str,
+    fired_at: dt.datetime,
 ) -> None:
-    """首投成功后写入去重键与冷却键。"""
+    """投递成功后写入去重键与冷却键。
+
+    ``revision`` 必须与投递前检查时使用的 revision 一致——
+    去重键是 ``(fingerprint, revision)``，写错 revision 等于写了一个
+    永远不会被检查到的键，等于没写。
+
+    冷却键只在**首投**（``revision == 0``）时写入：
+    升级投递不占用冷却窗口（PRD 22.4.4.1 第 3 条）。
+    """
     pipe = client.pipeline()
-    pipe.set(dedup_key(fingerprint, 0), "1", ex=int(DEDUP_TTL.total_seconds()))
-    pipe.set(
-        _cooldown_redis_key(cooldown_key),
-        fired_at.isoformat(),
-        ex=int(cooldown_window(severity).total_seconds()),
-    )
+    pipe.set(dedup_key(fingerprint, revision), "1", ex=int(DEDUP_TTL.total_seconds()))
+    if revision == 0:
+        pipe.set(
+            _cooldown_redis_key(cooldown_key),
+            fired_at.isoformat(),
+            ex=int(cooldown_window(severity).total_seconds()),
+        )
     await pipe.execute()
 
 

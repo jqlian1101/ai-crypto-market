@@ -50,9 +50,13 @@ async def deliver_pending_anomalies(
 
         if outcome.status == "SUCCESS":
             # 投递成功：写去重键与冷却键，状态置为 SENT。
+            # revision 必须与投递前检查时用的完全一致（L-27）：
+            # 去重键是 (fingerprint, revision)，写错 revision 等于写了一个
+            # 永远不会被检查到的键——升级投递会被反复重投。
             await mark_delivered(
                 redis,
                 fingerprint=event.fingerprint,
+                revision=event.revision,
                 cooldown_key=event.cooldown_key,
                 severity=event.severity,
                 fired_at=event.detected_at,
