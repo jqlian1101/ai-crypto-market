@@ -2,12 +2,16 @@
 
 > 状态说明：`[x]` 表示已实现**且有测试覆盖**；`[ ]` 表示未做或未验证。
 > 最近一次核对（2026-11-27）：P0 / P1 / P2 / P3 主体已完成，
-> 后端测试 **943 passed / 0 skipped**（本地 Postgres 16 + Redis 7 跑通全部集成测试）。
+> 后端测试 **1065 passed / 1 skipped**
+> （本地 Postgres 16 + Redis 7 跑通全部集成测试）。
 > P4 已完成「Prompt 外置 + 模型调用计量 + 单价表接入 + 模型分层 +
-> **超时部分结果**」，多 Agent 拆分待做。
+> **超时部分结果** + **成本分析报表** + **多 Agent 拆分（LangGraph）**」。
 > **2026-11-27 新增**：「依赖/配置声明未消费」的**机制化拦截**已落地
 > （`dependency_audit` + CI 常规检查，见 L-30），
 > 并删除 5 个零消费且无计划的依赖。
+> **2026-11-27 新增**：多 Agent 拆分过程中发现并修掉 2 个真实缺陷
+> （L-32 并发写库 / L-33 `agent_run_id` 恒为 NULL），
+> 反向验证又抓出 3 个「测试看起来有效、实际无效」（L-34）。
 >
 > **遗留问题（已确认存在但未修复）单独记录在 [`docs/遗留问题.md`](遗留问题.md)**，
 > 本清单只列任务级待办。
@@ -217,36 +221,44 @@
 - [x] 输出携带 `model_id`、`prompt_version`、`agent_version`
       ——`analysis_reports.versions` 不再是 `{}`，现写入
       `model_id` / `prompt_version` / `feature_version`。
-      `agent_version` 待多 Agent 拆分后补齐
+      **2026-11-27**：`agent_version` 已由多 Agent 路径写入
+      （`agent_runs.agent_version`），报告 `versions` 另加 `agent_mode` 标记路径
 
 **多 Agent 编排（PRD 4.7、24.4）**
-- [ ] 拆分 Technical、Market Structure、Market Regime、Derivatives、Liquidity、Event/Risk 等 Agent
-- [ ] 并行 fan-out，Agent 之间互不可见
-- [ ] Evidence Aggregator 合并证据并标注冲突
-- [ ] Master Agent 综合，区分事实、推断与待验证假设
-- [ ] 基于 `langgraph` 编排（依赖已声明但未使用）
-      ——`pyproject.toml` 声明了 `langgraph>=0.2`，**全仓零 import**。
-      **2026-11-25 已决定采用 LangGraph**（不再考虑手写 fan-out/fan-in）。
-      已验证环境可用：`langgraph 1.2.22` 已安装，
-      `StateGraph` / `Send` / `Annotated + operator.add` reducer 三件套可用，
-      最小原型已跑通 fan-out → 子 Agent（互不可见）→ fan-in（冲突标注）。
-      实现要点（来自原型验证）：
-      - **fan-out**：`add_conditional_edges(START, fan_out, [...])` +
-        `Send(f"agent_{name}", {...})` 动态分叉
-        （`Send` 从 `langgraph.types` 导入，**不在** `langgraph.graph` 里）；
-      - **并发写同一 state key 必须配 reducer**——
-        不配则并发写入直接抛异常（原型中 `agent_outputs` 用
-        `Annotated[list[dict], operator.add]` 解决）；
-      - **fan-in**：普通节点汇总各分支输出并标注冲突。
-      注意：`pyproject.toml` 声明的是 `langgraph>=0.2`，
-      而实测环境是 `1.2.22`——**声明下限与实际版本严重不符**，
-      需同步为 `>=1.2`（`Send` / reducer 语义在 1.x 才是稳定的）。
-      **已列入 `DEFAULT_WHITELIST`**（附原因与计划阶段）——
-      CI 会盯着它是否过期，一旦接入即报错要求删掉白名单条目
-- [ ] 每次 Agent 调用写 `agent_runs` 与 `agent_outputs`，记录输入快照引用、耗时、token
-      ——**表已就位且 `model_runs` 已接通**，`agent_runs` / `agent_outputs`
-      仍待多 Agent 拆分后写入
+- [x] 拆分 Technical、Market Structure、Market Regime、Derivatives、Liquidity、Event/Risk 等 Agent
+      ——新增 `services/agent_registry.py` 作为**唯一真源**
+      （职责边界 / 快照视图 / 证据来源域）；
+      6 份子 Agent Prompt 落在 `prompts/<agent>/analysis.v1.md`
+- [x] 并行 fan-out，Agent 之间互不可见
+      ——`services/multi_agent.py` 用 `Send` 的**局部 state** 实现，
+      **结构上就传不到**别的分支的结论，不是靠约定；
+      测试断言「精确的键集合」（弱断言恒真、锁不住缺陷）
+- [x] Evidence Aggregator 合并证据并标注冲突
+      ——`detect_conflicts()` 只把**明确相反**的方向判为冲突；
+      `UP` vs `FLAT`（证据不足）**不算**，
+      否则 6 个 Agent 里一个方向明确、一个保守就会产出一堆假分歧
+- [x] Master Agent 综合，区分事实、推断与待验证假设
+      ——`prompts/master/synthesis.v1.md` 要求 `【事实】``【推断】``【假设】`
+      三类标注；`services/multi_agent_report.py` 在转成报告时**原样保留**
+- [x] 基于 `langgraph` 编排
+      ——`langgraph 1.2.22`，`StateGraph` / `Send` / `Annotated + operator.add` reducer。
+      **`pyproject.toml` 的声明已同步为 `langgraph>=1.2`**（原先是 `>=0.2`，
+      与实际版本严重不符）；
+      **白名单条目已删除**（CI 已确认它被消费）
+- [x] 每次 Agent 调用写 `agent_runs` 与 `agent_outputs`，记录输入快照引用、耗时、token
+      ——新增 `services/agent_persistence.py`；`agent_runs` 改为**两阶段写入**
+      （`RUNNING` → 终态），先 flush 拿到 `run_id`；
+      `model_runs.agent_run_id`（此前**恒为 NULL**）由此接上；
+      **失败只写 `agent_runs`，绝不写伪造的 `agent_outputs`**（PRD 32.4）
 - [ ] Reflection：最多 1 轮，仅针对具体争议点
+      ——编排骨架已支持（冲突已识别并传给 Master），
+      但**反思调用本身**未实现。
+      当前由 Master 在单轮内自行处理分歧。
+      **有意为之**：PRD 4.7.3「不以增加调用次数作为功能完成标准」，
+      先测出单轮多 Agent 的真实成本再决定 Reflection 是否值得
+- [ ] 规则基线、单模型、多 Agent 的配对对照实验（PRD 4.7.3）
+      ——两条路径都已就绪（`process_one` / `process_one_multi`），
+      但**尚未跑过真实对比**；需要真实快照与模型调用数据
 
 **模型分层（PRD 24.1、24.3）**
 - [x] 启用 `TIER_LIGHT` 与 `TIER_DEEP` 调用路径（当前只用 STANDARD）
@@ -355,10 +367,11 @@
       顺带删除 5 个零消费且无计划的依赖：
       `python-multipart` / `tenacity` / `tomli-w` / `asyncpg` / `greenlet`
       （后两个来自 `postgres` extra——后端实际用**同步** `psycopg3`）。
-- [ ] `LLM_AGENT_MAX_TOKENS` 接入消费方（L-29）
-      ——已列入 `DEFAULT_WHITELIST` 并写明原因与计划阶段（P4 agent 编排接线）。
-      **白名单是「暂缓」不是「豁免」**：CI 会盯着它是否过期，
-      一旦有了消费方就会报错要求删除。
+- [x] `LLM_AGENT_MAX_TOKENS` 接入消费方（L-29）
+      ——**2026-11-27 已接入**：多 Agent 路径用它做
+      「单 Agent 单次最大 token」上限（PRD 24.2），
+      见 `services/llm_agent.py`。
+      **白名单条目已删除**——CI 已确认它被真实消费
 - [ ] 建立 `scheduled_jobs`、`job_runs`、`job_locks` 表与迁移（PRD 23.3）
 - [ ] 定时综合分析（1h）与日报复盘
 - [ ] 异动触发完整分析流程（PRD 22.6）

@@ -721,8 +721,9 @@ def _record_attempt(
     retry_count: int,
     error: dict[str, Any] | None,
     tier: str,
+    agent_name: str = PROMPT_AGENT_NAME,
     commit: bool = False,
-) -> None:
+) -> str:
     """记录一次 HTTP 尝试。
 
     **每一次实际发出的请求都写一行**——包括失败与被重试掉的那些。
@@ -731,12 +732,21 @@ def _record_attempt(
     ``tier`` 传的是**实际生效**的档位（降级后可能低于请求的档位），
     成本报表按档位分组靠的就是这一列。
 
+    ``agent_name`` 传**实际发起调用的 Agent**。
+    多 Agent 路径下它必须区分开——
+    否则 6 个子 Agent + 1 个 Master 的调用**全都记在 "master" 名下**，
+    成本报表「哪个 Agent 最贵」这一栏就永远答不出来，
+    而那正是 L-31 成本报表要回答的第一个问题。
+
     ``commit=True`` 时**立即提交**——用于让计量独立于报告事务存活
     （见 ``metering_scope`` 里关于 L-24 的说明）。
     提交后仍然保持「``model_runs`` 与 ``llm_cost_records`` 同事务」
     的原子性：它们要么一起进库，要么一起回滚。
+
+    返回 ``model_run_id``——多 Agent 路径需要它把计量行
+    与对应的 ``agent_runs`` 行关联起来（``model_runs.agent_run_id``）。
     """
-    record_model_run(
+    return record_model_run(
         db,
         provider=provider,
         model_id=model,
@@ -747,7 +757,7 @@ def _record_attempt(
         latency_ms=latency_ms,
         retry_count=retry_count,
         error=error,
-        agent_name=PROMPT_AGENT_NAME,
+        agent_name=agent_name,
         tier=tier,
         pricing=resolve_pricing(db, model_id=model, as_of=now()),
         commit=commit,
@@ -1439,6 +1449,136 @@ def _describe_failure(exception: BaseException, *, timeout: bool) -> str:
     if timeout:
         return f"{type(exception).__name__}: {exception}"
     return f"{type(exception).__name__}: {exception}"
+
+
+def process_one_multi(settings: Settings) -> bool:
+    """跑一次**多 Agent** 分析（PRD 4.7 / 24.4）。
+
+    与 ``process_one``（单 Agent 路径）**并存**，不替换它。
+    PRD 4.7.3 明确要求**配对比较**「规则基线、单模型综合分析和多 Agent 分析」——
+    单 Agent 路径正是对照组，**不能删**。
+
+    **本函数是入口，不是实现**：实际编排在
+    ``services/multi_agent_runner.py``。
+
+    **与单 Agent 路径的关键差异**：
+
+    1. **7 次模型调用**（6 子 Agent + 1 Master）而非 1 次；
+    2. **子 Agent 互相不可见**（PRD 4.7 协作原则 1）；
+    3. **失败不伪造输出**（PRD 32.4）——失败的 Agent 进「缺失名单」，
+       Master 会显式标注；
+    4. **每个 Agent 写一行 ``agent_runs``**，成功时另写 ``agent_outputs``。
+
+    **Master 失败 = 整体失败**：没有综合就没有结论。
+    不能拿子 Agent 的输出拼一份报告顶上去——
+    那会让读者以为「多 Agent 达成了一致」，而实际上没人做过综合。
+    """
+    from aicrypto.services.multi_agent_report import master_to_report_content
+    from aicrypto.services.multi_agent_runner import run_multi_agent_analysis
+
+    run_id = claim_run(settings)
+    if run_id is None:
+        return False
+    started = time.monotonic()
+    deadline = now() + dt.timedelta(seconds=settings.LLM_ANALYSIS_TOTAL_BUDGET_SECONDS)
+    snapshot: dict[str, Any] | None = None
+    tier = ModelTier.TIER_STANDARD
+    call_info: dict[str, Any] = {}
+    try:
+        snapshot = build_snapshot(run_id, settings)
+        with report_scope(settings) as db:
+            run_row = db.get(AnalysisRunRecord, run_id)
+            trigger = run_row.trigger if run_row is not None else "MANUAL"
+            analysis_mode = run_row.analysis_mode if run_row is not None else "LIVE"
+            tier = tier_for_trigger(
+                trigger,
+                retrospective=analysis_mode == AnalysisMode.RETROSPECTIVE,
+            )
+            analysis_id = run_row.analysis_id if run_row is not None else run_id
+            with metering_scope(settings) as meter_db:
+                outcome = run_multi_agent_analysis(
+                    snapshot=snapshot,
+                    settings=settings,
+                    db=db,
+                    analysis_id=analysis_id,
+                    meter_db=meter_db,
+                    record_attempt=_record_attempt,
+                    time_horizon="4h",
+                )
+            if outcome.master_result is None or not outcome.master_result.succeeded:
+                # **Master 没给出结论就没有结论**（PRD 32.4）。
+                # 子 Agent 的输出照常留在 ``agent_runs`` / ``agent_outputs`` 里，
+                # 但**不拼一份报告**——拼出来的会让读者误以为有人做过综合。
+                raise AICryptoError(
+                    ErrorCode.LLM_SCHEMA_INVALID,
+                    message="Master Agent 未能产出结论",
+                    details={"stage": "master", "missing_agents": outcome.missing_agents},
+                )
+            if time.monotonic() - started > settings.LLM_ANALYSIS_TOTAL_BUDGET_SECONDS:
+                raise TimeoutError("多 Agent 分析超过总时限")
+            if now() > deadline:
+                raise TimeoutError("多 Agent 分析超过总时限")
+            master_output = outcome.master_output
+            assert master_output is not None  # 上面已判定成功
+            content = master_to_report_content(
+                master_output,
+                missing_agents=outcome.missing_agents,
+            )
+            create_report(
+                db,
+                run_id=run_id,
+                market_snapshot_id=snapshot["snapshot_id"],
+                content=content,
+                status=AnalysisRunStatus.PARTIAL,
+                now=now(),
+                versions={
+                    "model_id": master_output.model_id,
+                    "prompt_version": master_output.prompt_version,
+                    "feature_version": FEATURE_VERSION,
+                    # Master 的档位记在 ``AgentResult.tier`` 上——
+                    # ``AgentOutput``（PRD 4.7 的 15 字段契约）里没有这一项，
+                    # 档位是**调用侧**的信息，不属于模型的输出内容。
+                    "tier": (outcome.master_result.tier if outcome.master_result else "")
+                    or str(tier),
+                    "requested_tier": str(tier),
+                    "agent_mode": "multi",
+                },
+                agent_run_ids=outcome.agent_run_ids,
+                degraded_reason=call_info.get("degraded_reason"),
+            )
+    except Exception as exc:
+        code = exc.code if isinstance(exc, AICryptoError) else ErrorCode.LLM_SCHEMA_INVALID
+        status = "FAILED"
+        if isinstance(exc, (httpx.TimeoutException, TimeoutError)):
+            code, status = ErrorCode.LLM_TIMEOUT, "TIMEOUT"
+        if isinstance(exc, AICryptoError) and exc.code == ErrorCode.LLM_TIMEOUT:
+            code, status = ErrorCode.LLM_TIMEOUT, "TIMEOUT"
+
+        with session_scope(settings) as db:
+            db.execute(
+                update(AnalysisRunRecord)
+                .where(
+                    AnalysisRunRecord.run_id == run_id,
+                    AnalysisRunRecord.status == "RUNNING",
+                )
+                .values(
+                    status=status,
+                    finished_at=now(),
+                    error={
+                        "code": str(code),
+                        "exception_type": type(exc).__name__,
+                        "details": exc.details if isinstance(exc, AICryptoError) else {},
+                    },
+                )
+            )
+        logger.warning(
+            "multi_agent_analysis_failed",
+            run_id=run_id,
+            code=str(code),
+            exception_type=type(exc).__name__,
+            details=exc.details if isinstance(exc, AICryptoError) else {},
+        )
+    return True
 
 
 def main() -> None:

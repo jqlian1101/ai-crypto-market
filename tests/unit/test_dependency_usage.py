@@ -174,12 +174,22 @@ def test_self_validation_inside_settings_is_not_a_consumer() -> None:
     只做正向断言的话，实现即使完全不算 settings.py 的引用也会通过——
     那就锁不住「自我校验不算消费方」这条规则。
 
-    **探针字段选 ``LLM_AGENT_MAX_TOKENS``**：它在 ``settings.py`` 的
-    ``_check_invariants`` 里被 ``self.`` 引用（``LLM_MAX_OUTPUT_TOKENS >
-    LLM_AGENT_MAX_TOKENS``），但**没有任何业务代码读它**——
-    它正是 L-29 记录的「声明了但零消费」的字段，也是白名单里的一条。
-    若实现把 ``settings.py`` 的自校验误算成消费方，
+    **探针字段选 ``APP_TIMEZONE``**：它在 ``settings.py`` 内部被
+    ``self.`` 引用（``timezone`` 属性里 ``ZoneInfo(self.APP_TIMEZONE)``），
+    但**没有任何业务代码读它**——
+    它正是一个「声明了但零消费」的字段。
+    若实现把 ``settings.py`` 的自校验/自派生误算成消费方，
     它就会变成「白名单已过期」，进而掩盖这个真实缺口。
+
+    **为什么不用 ``LLM_AGENT_MAX_TOKENS``**：它曾是本用例的探针，
+    但 P4-1b 多 Agent 拆分后它**真的**被业务代码消费了
+    （``services/llm_agent.py`` 用它做「单 Agent 单次最大 token」上限，
+    PRD 24.2）。
+    探针必须是「确实没被消费」的那个字段——
+    用一个**已经被消费**的字段当探针，
+    这个用例会在实现正确时**误报失败**，
+    而更糟的是：有人为了让用例通过而把实现改坏，
+    或者干脆把断言删掉。**探针必须保持「未被消费」这个前提。**
     """
     consumed = audit_settings_fields()
     assert consumed, "审计结果不应为空"
@@ -188,12 +198,12 @@ def test_self_validation_inside_settings_is_not_a_consumer() -> None:
     assert consumed["AUTH_TOKEN_SHA256"] is True
 
     # 反向：只在 settings.py 内部被 validator 引用的字段**不算**已消费。
-    assert consumed["LLM_AGENT_MAX_TOKENS"] is False
+    assert consumed["APP_TIMEZONE"] is False
 
     # 且它**不得**出现在「白名单已过期」的问题列表里——
     # 出现过就说明 settings.py 的自校验被误算成了消费方。
     problems = check_settings_usage()
-    stale = [p for p in problems if "LLM_AGENT_MAX_TOKENS" in p]
+    stale = [p for p in problems if "APP_TIMEZONE" in p]
     assert not stale, f"settings.py 内部的自校验被误算为消费方: {stale}"
 
 

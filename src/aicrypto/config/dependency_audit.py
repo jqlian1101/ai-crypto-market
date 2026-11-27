@@ -174,12 +174,6 @@ DEFAULT_WHITELIST: tuple[WhitelistEntry, ...] = (
         reason="P5 调度层尚未开工；接入 scheduled_jobs/job_runs/job_locks 时消费",
         planned_for="P5",
     ),
-    # ---- P4 多 Agent ----
-    WhitelistEntry(
-        "langgraph",
-        reason="P4 多 Agent 拆分尚未开工；LangGraph 状态图编排时消费（1.2.22 已验证可用）",
-        planned_for="P4-1b",
-    ),
     # ---- P6 通知 ----
     WhitelistEntry(
         "WECOM_APP_ENABLED",
@@ -358,12 +352,6 @@ DEFAULT_WHITELIST: tuple[WhitelistEntry, ...] = (
         "LLM_DAILY_COST_BUDGET_USD",
         reason="TODO 已明确「暂不做成本优化，仅保留成本分析」（PRD 24.2 延后清单）",
         planned_for=None,
-    ),
-    WhitelistEntry(
-        "LLM_AGENT_MAX_TOKENS",
-        reason="单 Agent 8k token 上限（PRD 24.2）随多 Agent 拆分落地时消费；"
-        "当前只有 master 单 Agent，尚无「单 Agent」粒度",
-        planned_for="P4-1b",
     ),
     # ---- P9 / 运维 ----
     WhitelistEntry(

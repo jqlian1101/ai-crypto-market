@@ -492,7 +492,202 @@ COST_MUTATIONS: list[Mutation] = [
 ]
 
 
-MUTATIONS: list[Mutation] = AUDIT_MUTATIONS + COST_MUTATIONS
+# --------------------------------------------------------------------------
+# 多 Agent 编排（multi_agent.py / agent_persistence.py / agent_registry.py）
+# --------------------------------------------------------------------------
+
+#: 多 Agent 模块
+MULTI_AGENT_TARGET = "src/aicrypto/services/multi_agent.py"
+#: 落库模块
+PERSISTENCE_TARGET = "src/aicrypto/services/agent_persistence.py"
+#: Agent 注册表
+REGISTRY_TARGET = "src/aicrypto/services/agent_registry.py"
+
+#: **让子 Agent 看到其他分支的结论**——
+#: 即 PRD 4.7 协作原则 1 被破坏。
+#:
+#: 这是本组破坏里**最重要**的一个：
+#: 子 Agent 一旦互相可见，6 个 Agent 就退化成 1 个 Agent 调了 6 次，
+#: 而且**看起来**做了独立验证、实际没有——这会**虚增**证据的独立性，
+#: 进而让 Master 高估置信度。
+#:
+#: 破坏方式：``Send`` 的分支局部 state 里带上全部快照，
+#: 而不是只带本 Agent 的视图——模拟「不小心把 state 传全了」。
+_SUB_AGENT_SEES_OTHERS = (
+    '                            "snapshot_view": view,',
+    '                            "snapshot_view": state["snapshot"],',
+)
+
+#: **分歧检测失效**——不再识别 UP vs DOWN。
+#:
+#: PRD 4.7 协作原则 3：「对重大分歧保留分歧」。
+#: 分歧必须**先被识别**才能被保留。
+_NO_CONFLICT_DETECTION = (
+    "            if not _is_opposite(left_direction, right_direction):\n                continue",
+    "            if False:\n                continue",
+)
+
+#: **把 FLAT 也算成分歧**——「证据不足」被当成「与看涨矛盾」。
+#:
+#: 这不是「漏报」而是「误报」：
+#: 6 个 Agent 里只要一个方向明确、一个保守，就会产出一堆**假分歧**，
+#: 淹没真分歧——而 PRD 要求保留的是「**重大**分歧」。
+_FLAT_COUNTS_AS_CONFLICT = (
+    '    return {left, right} == {"UP", "DOWN"}',
+    '    return {left, right} == {"UP", "DOWN"} or "FLAT" in {left, right}',
+)
+
+#: **方向识别过于宽松**——「多空不明」也被判成某个方向。
+_DIRECTION_TOO_LOOSE = (
+    "    matched = [direction for direction, hit in hits.items() if hit]\n    if len(matched) != 1:",
+    "    matched = [direction for direction, hit in hits.items() if hit]\n    if not matched:",
+)
+
+#: **子 Agent 异常不再被隔离**——让异常穿出去。
+#:
+#: PRD 24.4：「超时则输出『分析超时 + 已完成部分』的部分结果，
+#: 而不是整体失败」。
+#: 若异常穿出去，其他 5 个 Agent 已经算好的结果就**全丢了**。
+_NO_EXCEPTION_ISOLATION = (
+    '            except Exception as exc:\n                logger.exception("Agent %s 执行失败", spec.name)',
+    "            except ZeroDivisionError as exc:\n"
+    '                logger.exception("Agent %s 执行失败", spec.name)',
+)
+
+#: **失败也写 agent_outputs**——即伪造输出（PRD 32.4 的红线）。
+_FAILURE_WRITES_OUTPUT = (
+    '    if result.status == "SUCCESS" and result.output is not None:',
+    "    if result.output is not None:",
+)
+
+#: **agent_runs 不 flush**——``run_id`` 无法被 ``model_runs.agent_run_id`` 引用。
+_NO_FLUSH = (
+    "    db.flush()\n    return run_id",
+    "    return run_id",
+)
+
+#: **同源证据被当成多个独立来源**——
+#: ``ohlcv`` 域内的 3 个 Agent 被算成 3 个独立来源。
+#:
+#: PRD 4.7.2：「同源指标或同一行情衍生出的相似观点不能重复计为独立支持。
+#: ……独立调用不代表统计独立，Agent 数量不能作为置信度依据。」
+_SAME_SOURCE_COUNTED_AS_INDEPENDENT = (
+    "    domains: set[str] = set()\n    for spec in specs:\n        domains.update(spec.evidence_domains)\n    return len(domains)",
+    "    return len(specs)",
+)
+
+#: **证据分组按 Agent 而非按来源域**——
+#: Master 收到的分组不再体现「哪些 Agent 同源」。
+_EVIDENCE_GROUPS_BY_AGENT = (
+    "    groups: dict[str, list[str]] = {}\n"
+    "    for spec in specs:\n"
+    "        for domain in spec.evidence_domains:\n"
+    "            groups.setdefault(domain, []).append(spec.name)\n"
+    "    return groups",
+    "    return {spec.name: [spec.name] for spec in specs}",
+)
+
+MULTI_AGENT_MUTATIONS: list[Mutation] = [
+    Mutation(
+        "test_sub_agents_cannot_see_each_other",
+        "子 Agent 能看到其他分支的结论（伪多 Agent，虚增证据独立性）",
+        MULTI_AGENT_TARGET,
+        "tests/unit/test_multi_agent_graph.py::test_sub_agents_cannot_see_each_other",
+        (_SUB_AGENT_SEES_OTHERS,),
+    ),
+    Mutation(
+        "test_each_sub_agent_gets_its_own_trimmed_view",
+        "不再按 Agent 裁剪快照视图（各自独立快照视图失效）",
+        MULTI_AGENT_TARGET,
+        "tests/unit/test_multi_agent_graph.py::test_each_sub_agent_gets_its_own_trimmed_view",
+        (
+            (
+                "    blocks = {key: value for key, value in snapshot.items() if key in allowed}\n"
+                "    return {**metadata, **blocks}",
+                "    return snapshot",
+            ),
+        ),
+    ),
+    Mutation(
+        "test_only_opposite_pairs_are_conflicts",
+        "方向性分歧不再被识别（重大分歧会被抹平）",
+        MULTI_AGENT_TARGET,
+        "tests/unit/test_multi_agent_graph.py::test_only_opposite_pairs_are_conflicts",
+        (_NO_CONFLICT_DETECTION,),
+    ),
+    Mutation(
+        "test_flat_is_not_a_conflict_with_directional",
+        "「证据不足」被当成与看涨矛盾（假分歧淹没真分歧）",
+        MULTI_AGENT_TARGET,
+        "tests/unit/test_multi_agent_graph.py::test_flat_is_not_a_conflict_with_directional",
+        (_FLAT_COUNTS_AS_CONFLICT,),
+    ),
+    Mutation(
+        "test_detect_direction_returns_none_when_both_directions",
+        "方向识别过于宽松（自相矛盾的结论被当成明确方向）",
+        MULTI_AGENT_TARGET,
+        "tests/unit/test_multi_agent_graph.py::test_detect_direction_returns_none_when_both_directions",
+        (_DIRECTION_TOO_LOOSE,),
+    ),
+    Mutation(
+        "test_failure_does_not_abort_the_run",
+        "子 Agent 异常不再被隔离（一个失败拖垮整次分析）",
+        MULTI_AGENT_TARGET,
+        "tests/unit/test_multi_agent_graph.py::test_failure_does_not_abort_the_run",
+        (_NO_EXCEPTION_ISOLATION,),
+    ),
+    Mutation(
+        "test_master_failure_is_isolated_too",
+        "Master 异常不再被隔离（子 Agent 结果全丢）",
+        MULTI_AGENT_TARGET,
+        "tests/unit/test_multi_agent_graph.py::test_master_failure_is_isolated_too",
+        (
+            (
+                '        except Exception as exc:\n            logger.exception("Master Agent 执行失败")',
+                "        except ZeroDivisionError as exc:\n"
+                '            logger.exception("Master Agent 执行失败")',
+            ),
+        ),
+    ),
+    Mutation(
+        "test_failure_writes_agent_run_but_no_agent_output",
+        "失败也写 agent_outputs（伪造输出——PRD 32.4 红线）",
+        PERSISTENCE_TARGET,
+        "tests/unit/test_agent_persistence.py::test_failure_writes_agent_run_but_no_agent_output",
+        (_FAILURE_WRITES_OUTPUT,),
+    ),
+    Mutation(
+        "test_only_success_writes_agent_output",
+        "只要有输出对象就写 agent_outputs（状态不再把关）",
+        PERSISTENCE_TARGET,
+        "tests/unit/test_agent_persistence.py::test_only_success_writes_agent_output[TIMEOUT-False]",
+        (_FAILURE_WRITES_OUTPUT,),
+    ),
+    Mutation(
+        "test_start_creates_running_row_and_flushes",
+        "agent_runs 不 flush（run_id 无法被 model_runs.agent_run_id 引用）",
+        PERSISTENCE_TARGET,
+        "tests/unit/test_agent_persistence.py::test_start_creates_running_row_and_flushes",
+        (_NO_FLUSH,),
+    ),
+    Mutation(
+        "test_independent_support_count_is_by_domain",
+        "同源证据被算成多个独立来源（虚增置信度）",
+        REGISTRY_TARGET,
+        "tests/unit/test_multi_agent_graph.py::test_independent_support_count_is_by_domain",
+        (_SAME_SOURCE_COUNTED_AS_INDEPENDENT,),
+    ),
+    Mutation(
+        "test_evidence_groups_produced_by_graph",
+        "证据分组按 Agent 而非按来源域（Master 无法判断同源）",
+        REGISTRY_TARGET,
+        "tests/unit/test_multi_agent_graph.py::test_evidence_groups_produced_by_graph",
+        (_EVIDENCE_GROUPS_BY_AGENT,),
+    ),
+]
+
+
+MUTATIONS: list[Mutation] = AUDIT_MUTATIONS + COST_MUTATIONS + MULTI_AGENT_MUTATIONS
 
 
 def run_tests(node_id: str) -> tuple[bool, str]:
