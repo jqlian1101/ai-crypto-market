@@ -148,9 +148,17 @@ def master_to_report_content(
     if missing:
         uncertainties.append(f"以下 Agent 未能产出结论，其视角缺失：{'、'.join(missing)}")
 
-    missing_data = list(output.missing_data)
+    # **数据缺口进 ``uncertainties``**——``AnalysisReportContent`` **没有**
+    # ``missing_data`` 字段（``extra="forbid"``，多了会被拒绝）。
+    # 之前这里算了一个 ``missing_data`` 局部变量然后**直接丢掉**：
+    # Master 报告的数据缺口与缺失 Agent 名单**全部消失**，
+    # 而 PRD 32.4 要求「如实登记缺失」——
+    # 算完不落库等于没登记。
+    # 正确去处就是 ``uncertainties``（那才是「读者须知的不确定性」栏）。
+    for item in output.missing_data:
+        uncertainties.append(f"数据缺口：{item}")
     for agent in missing:
-        missing_data.append(f"{agent} 的输入缺失或输出不可用")
+        uncertainties.append(f"数据缺口：{agent} 的输入缺失或输出不可用")
 
     dominant_factors = [f"{FACT_MARK}{item}" for item in facts[:5]] + [
         f"{INFERENCE_MARK}{item}" for item in inferences[:5]

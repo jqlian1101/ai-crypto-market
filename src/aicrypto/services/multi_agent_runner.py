@@ -39,12 +39,12 @@ from __future__ import annotations
 
 import datetime as dt
 import threading
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any
 
 from aicrypto.common.clock import now
 from aicrypto.config.settings import Settings
-from aicrypto.domain.analysis.agent_output import AgentOutput
+from aicrypto.domain.analysis.agent_output import AgentOutput, ModelTier
 from aicrypto.services.agent_persistence import finish_agent_run, start_agent_run
 from aicrypto.services.agent_registry import AGENTS_BY_NAME, MASTER_SPEC
 from aicrypto.services.llm_agent import call_agent
@@ -76,6 +76,11 @@ class MultiAgentOutcome:
     agent_run_ids: list[str] = field(default_factory=list)
     #: 是否超时
     timed_out: bool = False
+    #: **实际生效的档位**（降级后可能低于请求的档位）。
+    #: ``None`` = 没有发生过降级。
+    effective_tier: str | None = None
+    #: 降级原因（PRD 24.1：降级**必须留痕**）。
+    degraded_reason: str | None = None
 
     @property
     def master_output(self) -> AgentOutput | None:
@@ -102,6 +107,7 @@ def run_multi_agent_analysis(
     record_attempt: Any,
     time_horizon: str = DEFAULT_TIME_HORIZON,
     commit_metering: bool = True,
+    requested_tier: ModelTier | None = None,
 ) -> MultiAgentOutcome:
     """跑一次完整的多 Agent 分析并落库。
 
@@ -110,6 +116,14 @@ def run_multi_agent_analysis(
     二者分开是 L-24 的要求：报告回滚不应让计量一起消失。
 
     **DB 写入全部在主线程串行完成**——见模块文档的线程安全说明。
+
+    **``requested_tier``**：调用方按触发来源算出的档位
+    （PRD 24.3：日报/复盘用 ``TIER_DEEP``）。
+    **子 Agent 始终用 ``TIER_LIGHT``**（它们是抽取分类类任务），
+    而 **Master 用这里传入的档位**——
+    综合推理才是重活，档位应该按场景定。
+
+    不传则 Master 用 ``TIER_STANDARD``（与 ``MASTER_SPEC.tier`` 一致）。
     """
     snapshot_id = str(snapshot.get("snapshot_id", ""))
     as_of = _parse_as_of(snapshot.get("as_of"))
@@ -141,9 +155,19 @@ def run_multi_agent_analysis(
         ``prompt_version`` 由**渲染时**确定并传入——
         调用方若自己去重新读文件，会引入
         「渲染用的版本」与「记录用的版本」不一致的可能。
+
+        **档位覆盖**：Master 用调用方传入的 ``requested_tier``
+        （按触发来源决定，PRD 24.3），
+        子 Agent 保持 ``spec.tier``（``TIER_LIGHT``）。
+        做法是**替换 spec**——``call_agent`` 只认 ``spec.tier``，
+        而 ``spec`` 是 frozen dataclass，
+        所以用 ``dataclasses.replace`` 造一个新的。
         """
+        effective_spec = spec
+        if spec.name == MASTER_SPEC.name and requested_tier is not None:
+            effective_spec = replace(spec, tier=str(requested_tier))
         return call_agent(
-            spec=spec,
+            spec=effective_spec,
             messages=messages,
             prompt_version=prompt_version,
             context=context,
@@ -210,8 +234,21 @@ def run_multi_agent_analysis(
 
     # ---- 计量（主线程，串行）----
     # L-24：计量与报告分属两个事务，报告回滚不应让计量一起消失。
+    #
+    # **把 ``agent_run_id`` 挂到计量行上**——
+    # ``model_runs.agent_run_id`` 回答的是
+    # 「这次模型调用属于哪一次 Agent 运行」。
+    # 此前这条链**根本没接上**：``record_model_run`` 硬编码
+    # ``agent_run_id=None``，于是那个外键列**恒为 NULL**——
+    # 列建了、索引建了，却从没有写入方（L-33）。
+    #
+    # 用 ``agent_name`` 关联：一次调用（含重试）对应**一个** ``agent_runs`` 行，
+    # 重试的多次尝试都指向同一行。
+    run_id_by_agent: dict[str, str] = {result.agent_name: run_id for run_id, result in pending}
     for kwargs in pending_metering:
-        record_attempt(meter_db, **kwargs)
+        agent_name = kwargs.get("agent_name")
+        linked_run_id: str | None = run_id_by_agent.get(agent_name) if agent_name else None
+        record_attempt(meter_db, agent_run_id=linked_run_id, **kwargs)
 
     return MultiAgentOutcome(
         agent_results=agent_results,
@@ -220,6 +257,12 @@ def run_multi_agent_analysis(
         missing_agents=list(state.get("missing_agents", [])),
         agent_run_ids=agent_run_ids,
         timed_out=now() > deadline,
+        # **降级信息取自 Master**——Master 是综合推理那一步，
+        # 它的档位才是按触发来源定的（PRD 24.3）。
+        # 此前这里什么都没返回，而调用方读的是 ``call_info``（永远是空 dict），
+        # 于是**降级被静默吞掉**：读者以为拿到的是原档位的结论。
+        effective_tier=master_result.tier if master_result else None,
+        degraded_reason=master_result.degraded_reason if master_result else None,
     )
 
 

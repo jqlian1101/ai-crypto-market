@@ -502,6 +502,115 @@ MULTI_AGENT_TARGET = "src/aicrypto/services/multi_agent.py"
 PERSISTENCE_TARGET = "src/aicrypto/services/agent_persistence.py"
 #: Agent 注册表
 REGISTRY_TARGET = "src/aicrypto/services/agent_registry.py"
+#: Master 输出 -> 报告内容的转换层
+REPORT_TARGET = "src/aicrypto/services/multi_agent_report.py"
+#: 多 Agent 的粘合层（编排 -> 模型 -> 落库）
+RUNNER_TARGET = "src/aicrypto/services/multi_agent_runner.py"
+
+#: **调用方传入的档位不再传给 Master**（L-35）。
+#:
+#: 典型症状：日报/复盘该用的 DEEP 档**永远用不上**，
+#: 而报告里写的是「请求档位」——**看起来一切正常**。
+_TIER_NOT_PROPAGATED = (
+    "if spec.name == MASTER_SPEC.name and requested_tier is not None:",
+    "if False:",
+)
+
+#: **降级原因不再上报**（L-35）。
+#:
+#: 降级被静默吞掉：读者以为拿到的是原档位的结论（PRD 24.1「降级必须留痕」）。
+_DEGRADATION_DROPPED = (
+    "degraded_reason=master_result.degraded_reason if master_result else None,",
+    "degraded_reason=None,",
+)
+
+#: **计量行不再挂上 ``agent_run_id``**（L-33 的真正修复点）。
+#:
+#: ``model_runs.agent_run_id`` 回答「这次模型调用属于哪一次 Agent 运行」。
+#: 此前 ``record_model_run`` 硬编码 ``agent_run_id=None``，
+#: 那个外键列**恒为 NULL**——列建了、索引建了，却从没有写入方。
+_AGENT_RUN_ID_NOT_LINKED = (
+    "        run_id = run_id_by_agent.get(agent_name) if agent_name else None",
+    "        run_id = None",
+)
+
+#: **事实/推断/假设的标注被洗掉**（PRD 4.7.2）。
+#:
+#: 标注是 Master 履行「区分事实、推断和待验证假设」这条纪律的**唯一证据**。
+#: 把它洗掉，报告看起来还是「有结论」，
+#: 但读者**无法分辨哪句是事实、哪句是猜测**——纪律等于没执行。
+#:
+#: **注意**：不能简单地把 ``FACT_MARK`` 改成空串——
+#: 那样 ``finding[len(FACT_MARK):]`` 会取**整串**（len 为 0），
+#: 标注反而**原样留在输出里**，破坏根本不生效。
+#: 必须改成「**把标注从输出里删掉**」。
+_MARKERS_STRIPPED = (
+    'dominant_factors = [f"{FACT_MARK}{item}" for item in facts[:5]] + [\n'
+    '        f"{INFERENCE_MARK}{item}" for item in inferences[:5]\n'
+    "    ]",
+    "dominant_factors = [item for item in facts[:5]] + [\n"
+    "        item for item in inferences[:5]\n"
+    "    ]",
+)
+
+#: **【假设】标注被洗掉**（未验证的推测被抬高成结论）。
+_HYPOTHESIS_MARK_STRIPPED = (
+    'disagreements.extend(f"{HYPOTHESIS_MARK}{item}" for item in hypotheses[:3])',
+    "disagreements.extend(item for item in hypotheses[:3])",
+)
+
+#: **未标注的发现被直接丢弃**。
+#:
+#: 强行分类等于替 Master 做了它没做的判断；
+#: 但完全丢弃等于**吞掉信息**——读者会以为 Master 没说过这话。
+_UNMARKED_DROPPED = (
+    "        else:\n            unclassified.append(finding)",
+    "        else:\n            pass",
+)
+
+#: **识别不出方向时返回 NEUTRAL 而不是 UNAVAILABLE**。
+#:
+#: ``NEUTRAL`` 是「我看下来是震荡」——
+#: 把它当成「我没结论」，会让「没分析出来」
+#: 在报表上看起来像「分析出来是震荡」（PRD 24.4.1 部分结果红线）。
+_UNAVAILABLE_BECOMES_NEUTRAL = (
+    "    if len(matched) != 1:\n        return BIAS_UNAVAILABLE",
+    "    if len(matched) == 0:\n        return BIAS_NEUTRAL",
+)
+
+#: **缺失的 Agent 不再显式标注**（PRD 32.4）。
+_MISSING_AGENTS_DROPPED = (
+    "        uncertainties.append(f\"以下 Agent 未能产出结论，其视角缺失：{'、'.join(missing)}\")",
+    "        pass",
+)
+
+#: **Master 报告的数据缺口被吞掉**。
+#:
+#: 算完不落库等于没登记——这正是本项目反复出现的
+#: 「**配了 / 算了 / 没人看**」型静默失效。
+_MISSING_DATA_DROPPED = (
+    '    for item in output.missing_data:\n        uncertainties.append(f"数据缺口：{item}")',
+    "    pass",
+)
+
+#: **把自然语言证据转成 EvidenceRef**（PRD 4.7.1 禁止虚构引用）。
+#:
+#: ``EvidenceRef`` 要求精确的 ``source_path`` 与 ``value``——
+#: Master 的自然语言给不出这些，硬转会造出**无法定位的引用**。
+_EVIDENCE_FABRICATED = (
+    "        evidence=[],\n        counter_evidence=[],",
+    "        evidence=[],\n"
+    "        counter_evidence=[\n"
+    "            EvidenceRef(\n"
+    '                evidence_id="ev_fabricated",\n'
+    '                source_type="model_output",\n'
+    '                source_path="summary",\n'
+    '                value="fabricated",\n'
+    '                snapshot_id="snap_unknown",\n'
+    '                interpretation="破坏：凭空造一条无法定位的证据引用",\n'
+    "            )\n"
+    "        ],",
+)
 
 #: **让子 Agent 看到其他分支的结论**——
 #: 即 PRD 4.7 协作原则 1 被破坏。
@@ -683,6 +792,78 @@ MULTI_AGENT_MUTATIONS: list[Mutation] = [
         REGISTRY_TARGET,
         "tests/unit/test_multi_agent_graph.py::test_evidence_groups_produced_by_graph",
         (_EVIDENCE_GROUPS_BY_AGENT,),
+    ),
+    # ---- L-35：档位与降级 ----
+    Mutation(
+        "test_requested_tier_reaches_the_master_call",
+        "调用方传入的档位不再传给 Master（DEEP 档永远用不上）",
+        RUNNER_TARGET,
+        "tests/integration/test_multi_agent_persistence.py::test_requested_tier_reaches_the_master_call",
+        (_TIER_NOT_PROPAGATED,),
+    ),
+    Mutation(
+        "test_degradation_is_surfaced_on_the_outcome",
+        "降级原因不再上报（读者以为拿到的是原档位的结论）",
+        RUNNER_TARGET,
+        "tests/integration/test_multi_agent_persistence.py::test_degradation_is_surfaced_on_the_outcome",
+        (_DEGRADATION_DROPPED,),
+    ),
+    Mutation(
+        "test_process_one_multi_publishes_report_end_to_end",
+        "计量行不再挂上 agent_run_id（「这次调用属于哪次 Agent 运行」答不出来）",
+        RUNNER_TARGET,
+        "tests/integration/test_multi_agent_worker_e2e.py::test_process_one_multi_publishes_report_end_to_end",
+        (_AGENT_RUN_ID_NOT_LINKED,),
+    ),
+    # ---- 报告转换层：事实/推断/假设的标注 ----
+    Mutation(
+        "test_fact_marker_is_preserved_in_dominant_factors",
+        "【事实】标注被洗掉（事实与猜测无法分辨）",
+        REPORT_TARGET,
+        "tests/unit/test_multi_agent_report.py::test_fact_marker_is_preserved_in_dominant_factors",
+        (_MARKERS_STRIPPED,),
+    ),
+    Mutation(
+        "test_hypothesis_marker_is_preserved_in_disagreements",
+        "【假设】标注被洗掉（未验证的推测被抬高成结论）",
+        REPORT_TARGET,
+        "tests/unit/test_multi_agent_report.py::test_hypothesis_marker_is_preserved_in_disagreements",
+        (_HYPOTHESIS_MARK_STRIPPED,),
+    ),
+    Mutation(
+        "test_unmarked_findings_are_preserved_not_dropped",
+        "未标注的发现被直接丢弃（吞掉 Master 说过的信息）",
+        REPORT_TARGET,
+        "tests/unit/test_multi_agent_report.py::test_unmarked_findings_are_preserved_not_dropped",
+        (_UNMARKED_DROPPED,),
+    ),
+    Mutation(
+        "test_unclear_summary_maps_to_unavailable_not_neutral",
+        "识别不出方向时返回 NEUTRAL（「没结论」被伪装成「震荡」）",
+        REPORT_TARGET,
+        "tests/unit/test_multi_agent_report.py::test_unclear_summary_maps_to_unavailable_not_neutral",
+        (_UNAVAILABLE_BECOMES_NEUTRAL,),
+    ),
+    Mutation(
+        "test_missing_agents_are_explicitly_annotated",
+        "缺失的 Agent 不再显式标注（PRD 32.4 的「如实登记缺失」失效）",
+        REPORT_TARGET,
+        "tests/unit/test_multi_agent_report.py::test_missing_agents_are_explicitly_annotated",
+        (_MISSING_AGENTS_DROPPED,),
+    ),
+    Mutation(
+        "test_master_reported_missing_data_is_not_dropped",
+        "Master 报告的数据缺口被吞掉（算完不落库等于没登记）",
+        REPORT_TARGET,
+        "tests/unit/test_multi_agent_report.py::test_master_reported_missing_data_is_not_dropped",
+        (_MISSING_DATA_DROPPED,),
+    ),
+    Mutation(
+        "test_no_evidence_refs_are_fabricated",
+        "把自然语言证据转成 EvidenceRef（虚构引用）",
+        REPORT_TARGET,
+        "tests/unit/test_multi_agent_report.py::test_no_evidence_refs_are_fabricated",
+        (_EVIDENCE_FABRICATED,),
     ),
 ]
 

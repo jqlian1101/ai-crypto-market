@@ -440,6 +440,7 @@ def record_model_run(
     tier: str | None = None,
     pricing: PricingEntry | None = None,
     commit: bool = False,
+    agent_run_id: str | None = None,
 ) -> str:
     """写入 ``model_runs`` 与 ``llm_cost_records``，返回 ``model_run_id``。
 
@@ -450,13 +451,20 @@ def record_model_run(
     （见 ``_record_attempt`` 里关于 L-24 的说明）。
     提交后仍然保持「两表同事务」的原子性：
     它们要么一起进库，要么一起回滚。
+
+    **``agent_run_id``** 指向 ``agent_runs.run_id``——
+    它回答的是「这次模型调用属于哪一次 Agent 运行」。
+    不传就留 ``NULL``（单 Agent 路径没有 ``agent_runs`` 概念）。
+    这个外键列此前**恒为 NULL**（L-33）：
+    列建了、索引建了，却**从来没有写入方**——
+    「配了没用」的又一例。
     """
     model_run_id = f"mrun_{uuid.uuid4().hex}"
     created_at = now()
     db.add(
         ModelRun(
             model_run_id=model_run_id,
-            agent_run_id=None,
+            agent_run_id=agent_run_id,
             provider=provider,
             model_id=model_id,
             prompt_version=prompt_version,
@@ -723,6 +731,7 @@ def _record_attempt(
     tier: str,
     agent_name: str = PROMPT_AGENT_NAME,
     commit: bool = False,
+    agent_run_id: str | None = None,
 ) -> str:
     """记录一次 HTTP 尝试。
 
@@ -745,6 +754,10 @@ def _record_attempt(
 
     返回 ``model_run_id``——多 Agent 路径需要它把计量行
     与对应的 ``agent_runs`` 行关联起来（``model_runs.agent_run_id``）。
+
+    ``agent_run_id`` 是**对应的** ``agent_runs.run_id``——
+    多 Agent 路径必须传，否则那个外键列**恒为 NULL**
+    （列建了、索引建了，却从没有写入方——L-33）。
     """
     return record_model_run(
         db,
@@ -761,6 +774,7 @@ def _record_attempt(
         tier=tier,
         pricing=resolve_pricing(db, model_id=model, as_of=now()),
         commit=commit,
+        agent_run_id=agent_run_id,
     )
 
 
@@ -1483,7 +1497,6 @@ def process_one_multi(settings: Settings) -> bool:
     deadline = now() + dt.timedelta(seconds=settings.LLM_ANALYSIS_TOTAL_BUDGET_SECONDS)
     snapshot: dict[str, Any] | None = None
     tier = ModelTier.TIER_STANDARD
-    call_info: dict[str, Any] = {}
     try:
         snapshot = build_snapshot(run_id, settings)
         with report_scope(settings) as db:
@@ -1504,6 +1517,13 @@ def process_one_multi(settings: Settings) -> bool:
                     meter_db=meter_db,
                     record_attempt=_record_attempt,
                     time_horizon="4h",
+                    # **把按触发来源算出的档位传进去**（PRD 24.3）。
+                    # 此前这一层**算出了档位却没往下传**，
+                    # 模型调用只认 ``spec.tier``——
+                    # 于是日报/复盘该用的 DEEP 档**永远用不上**，
+                    # 而且报告里写的是「请求档位」，
+                    # 看起来一切正常。
+                    requested_tier=tier,
                 )
             if outcome.master_result is None or not outcome.master_result.succeeded:
                 # **Master 没给出结论就没有结论**（PRD 32.4）。
@@ -1544,7 +1564,12 @@ def process_one_multi(settings: Settings) -> bool:
                     "agent_mode": "multi",
                 },
                 agent_run_ids=outcome.agent_run_ids,
-                degraded_reason=call_info.get("degraded_reason"),
+                # **降级必须留痕**（PRD 24.1）。
+                # 此前这里读的是 ``call_info``——那个 dict 在多 Agent 路径上
+                # **永远是空的**（``call_info`` 是单 Agent 路径 ``generate_report``
+                # 的产物），于是降级被**静默吞掉**：
+                # 读者以为拿到的是原档位的结论。
+                degraded_reason=outcome.degraded_reason,
             )
     except Exception as exc:
         code = exc.code if isinstance(exc, AICryptoError) else ErrorCode.LLM_SCHEMA_INVALID

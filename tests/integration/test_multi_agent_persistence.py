@@ -35,6 +35,7 @@ from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session
 
 from aicrypto.config.settings import Settings
+from aicrypto.domain.analysis.agent_output import ModelTier
 from aicrypto.infrastructure.database.models.analysis import (
     AgentOutput as AgentOutputRow,
 )
@@ -149,6 +150,10 @@ def settings(db_env: Session) -> Settings:
         LLM_CLOUD_API_KEY="test-key",
         LLM_TIER_LIGHT_MODEL="test-model",
         LLM_TIER_STANDARD_MODEL="test-model",
+        # **DEEP 也要配**——否则请求 DEEP 会降级到 STANDARD，
+        # 记录下来的「实际生效档位」就是 STANDARD，
+        # 测不出「请求的档位有没有传下去」。
+        LLM_TIER_DEEP_MODEL="test-model",
     )
 
 
@@ -347,6 +352,146 @@ def test_multi_agent_calls_are_metered(
     tiers = {row.agent_name: row.tier for row in cost_records}
     assert tiers["technical"] == "TIER_LIGHT"
     assert tiers["master"] == "TIER_STANDARD"
+
+
+# --------------------------------------------------------------------------
+# 档位与降级（L-35）
+# --------------------------------------------------------------------------
+
+
+def test_requested_tier_reaches_the_master_call(
+    db_env: Session,
+    settings: Settings,
+    snapshot: dict,
+) -> None:
+    """**按触发来源算出的档位必须真的传到 Master 的模型调用**（PRD 24.3）。
+
+    此前这一层**算出了档位却没往下传**——
+    ``call_agent`` 只认 ``spec.tier``，
+    于是日报/复盘该用的 DEEP 档**永远用不上**，
+    而报告里写的是「请求档位」，**看起来一切正常**。
+
+    这是典型的「算对了但没用」——
+    单测能测出「算对了」，集成测试才能测出「用上了」。
+    """
+    _seed_pricing(db_env)
+
+    original_client = httpx.Client
+
+    def patched_client(*args, **kwargs):
+        kwargs["transport"] = _mock_transport(_agent_payload)
+        return original_client(*args, **kwargs)
+
+    httpx.Client = patched_client  # type: ignore[assignment]
+    try:
+        run_multi_agent_analysis(
+            snapshot=snapshot,
+            settings=settings,
+            db=db_env,
+            analysis_id="ana_test",
+            meter_db=db_env,
+            record_attempt=_record_to_db,
+            requested_tier=ModelTier.TIER_DEEP,
+        )
+    finally:
+        httpx.Client = original_client  # type: ignore[assignment]
+
+    db_env.flush()
+
+    cost_records = list(db_env.scalars(select(LLMCostRecord)))
+    tiers = {row.agent_name: row.tier for row in cost_records}
+
+    assert tiers["master"] == "TIER_DEEP", "Master 必须用调用方传入的档位"
+    # 子 Agent 仍是 LIGHT——它们是抽取分类类任务，不该跟着涨档位。
+    assert tiers["technical"] == "TIER_LIGHT"
+
+
+def test_sub_agents_keep_light_tier_even_when_master_is_deep(
+    db_env: Session,
+    settings: Settings,
+    snapshot: dict,
+) -> None:
+    """**子 Agent 恒为 LIGHT**——升档位只针对综合推理那一步。
+
+    否则一次日报会让 6 个抽取任务也用 DEEP 模型，
+    成本翻好几倍而收益接近零。
+    """
+    _seed_pricing(db_env)
+
+    original_client = httpx.Client
+
+    def patched_client(*args, **kwargs):
+        kwargs["transport"] = _mock_transport(_agent_payload)
+        return original_client(*args, **kwargs)
+
+    httpx.Client = patched_client  # type: ignore[assignment]
+    try:
+        run_multi_agent_analysis(
+            snapshot=snapshot,
+            settings=settings,
+            db=db_env,
+            analysis_id="ana_test",
+            meter_db=db_env,
+            record_attempt=_record_to_db,
+            requested_tier=ModelTier.TIER_DEEP,
+        )
+    finally:
+        httpx.Client = original_client  # type: ignore[assignment]
+
+    db_env.flush()
+
+    cost_records = list(db_env.scalars(select(LLMCostRecord)))
+    for row in cost_records:
+        if row.agent_name != MASTER_SPEC.name:
+            assert row.tier == "TIER_LIGHT", f"{row.agent_name} 不该升档位"
+
+
+def test_degradation_is_surfaced_on_the_outcome(
+    db_env: Session,
+    snapshot: dict,
+) -> None:
+    """**降级必须能被调用方拿到**——PRD 24.1「降级必须留痕」。
+
+    此前降级信息只存在于 ``AgentResult`` 里，
+    而调用方读的是 ``call_info``（多 Agent 路径上**永远是空的**），
+    于是降级被**静默吞掉**：读者以为拿到的是原档位的结论。
+
+    这里让 STANDARD 档没配模型（降级到 LIGHT），
+    断言 ``outcome.degraded_reason`` 非空。
+    """
+    settings = Settings(
+        _env_file=None,
+        DATABASE_URL=os.getenv("ANALYSIS_TEST_DATABASE_URL", ""),
+        REDIS_URL="redis://127.0.0.1:6379/0",
+        AUTH_ENABLED=False,
+        LLM_CLOUD_BASE_URL="https://example.invalid/v1",
+        LLM_CLOUD_API_KEY="test-key",
+        LLM_TIER_LIGHT_MODEL="test-model",
+        LLM_TIER_STANDARD_MODEL=None,  # **故意不配** -> Master 降级到 LIGHT
+    )
+
+    original_client = httpx.Client
+
+    def patched_client(*args, **kwargs):
+        kwargs["transport"] = _mock_transport(_agent_payload)
+        return original_client(*args, **kwargs)
+
+    httpx.Client = patched_client  # type: ignore[assignment]
+    try:
+        outcome = run_multi_agent_analysis(
+            snapshot=snapshot,
+            settings=settings,
+            db=db_env,
+            analysis_id="ana_test",
+            meter_db=db_env,
+            record_attempt=_noop_record,
+        )
+    finally:
+        httpx.Client = original_client  # type: ignore[assignment]
+
+    assert outcome.succeeded
+    assert outcome.degraded_reason is not None, "降级必须留痕，不能被静默吞掉"
+    assert outcome.effective_tier == "TIER_LIGHT"
 
 
 # --------------------------------------------------------------------------
