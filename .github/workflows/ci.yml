@@ -58,7 +58,7 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -e ".[dev,postgres]"
+          pip install -e ".[dev]"
 
       - name: Ruff lint
         run: ruff check .
@@ -71,6 +71,14 @@ jobs:
 
       - name: Config catalog check
         run: pytest tests/unit/test_config_catalog.py -q
+
+      # 「声明了但没人消费」的对账（L-30）。
+      # 本项目已累计 11 次出现「配置项/依赖/指标定义了却零消费方」，
+      # 这类缺陷**不会让任何测试失败**——配置能加载、依赖能安装、接口能返回 200，
+      # 只有真正用到那个功能时才会发现它从来没生效过。
+      # 由 CI 强制，而不是靠人记得查。
+      - name: Dependency & settings usage check
+        run: pytest tests/unit/test_dependency_usage.py -q
 
       - name: Migrations
         run: alembic -c migrations/alembic.ini upgrade head

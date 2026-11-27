@@ -1,10 +1,13 @@
 # AICryptoMarket 完整 TODO List
 
 > 状态说明：`[x]` 表示已实现**且有测试覆盖**；`[ ]` 表示未做或未验证。
-> 最近一次核对（2026-11-25）：P0 / P1 / P2 / P3 主体已完成，
-> 后端测试 **933 passed / 0 skipped**（本地 Postgres 16 + Redis 7 跑通全部集成测试）。
+> 最近一次核对（2026-11-27）：P0 / P1 / P2 / P3 主体已完成，
+> 后端测试 **943 passed / 0 skipped**（本地 Postgres 16 + Redis 7 跑通全部集成测试）。
 > P4 已完成「Prompt 外置 + 模型调用计量 + 单价表接入 + 模型分层 +
 > **超时部分结果**」，多 Agent 拆分待做。
+> **2026-11-27 新增**：「依赖/配置声明未消费」的**机制化拦截**已落地
+> （`dependency_audit` + CI 常规检查，见 L-30），
+> 并删除 5 个零消费且无计划的依赖。
 >
 > **遗留问题（已确认存在但未修复）单独记录在 [`docs/遗留问题.md`](遗留问题.md)**，
 > 本清单只列任务级待办。
@@ -223,6 +226,8 @@
       注意：`pyproject.toml` 声明的是 `langgraph>=0.2`，
       而实测环境是 `1.2.22`——**声明下限与实际版本严重不符**，
       需同步为 `>=1.2`（`Send` / reducer 语义在 1.x 才是稳定的）。
+      **已列入 `DEFAULT_WHITELIST`**（附原因与计划阶段）——
+      CI 会盯着它是否过期，一旦接入即报错要求删掉白名单条目
 - [ ] 每次 Agent 调用写 `agent_runs` 与 `agent_outputs`，记录输入快照引用、耗时、token
       ——**表已就位且 `model_runs` 已接通**，`agent_runs` / `agent_outputs`
       仍待多 Agent 拆分后写入
@@ -312,13 +317,33 @@
 - [ ] 接入 APScheduler（依赖已声明但未使用）
       ——`pyproject.toml` 声明了 `apscheduler>=3.10`，**全仓零 import**
       （与 L-19 / L-20 / L-21 同型的「声明未消费」，第 8 次）。
-      计划并入 P5 调度层落地
-- [ ] **依赖声明 vs 实际 import 对账进 CI**（L-26 的机制化对策）
-      ——「声明未消费」已累计出现 **9–10 次**
-      （L-03 / L-07a / L-16 / L-18 / L-19 / L-20 / L-21 / L-23 / L-26），
-      **不能再靠人记得查**。加一条 CI 检查：
-      `pyproject.toml` 里声明的依赖必须至少被一处 import，
-      零消费的依赖直接报错（或显式列入白名单并说明原因）。
+      计划并入 P5 调度层落地。
+      **已列入 `DEFAULT_WHITELIST`**（附原因与计划阶段）——
+      CI 会盯着它是否过期，一旦接入即报错要求删掉白名单条目
+- [x] **依赖声明 vs 实际 import 对账进 CI**（L-26 的机制化对策，L-30 已落地）
+      ——「声明未消费」已累计出现 **11 次**
+      （L-03 / L-07a / L-16 / L-18 / L-19 / L-20 / L-21 / L-23 / L-26 / L-29
+      及 `apscheduler` / `langgraph`），**不能再靠人记得查**。
+      已新增 `src/aicrypto/config/dependency_audit.py`（**AST 分析**，非正则）：
+      - `audit_dependencies()`——依赖声明 vs 实际 import；
+      - `audit_settings_fields()`——`Settings` 字段 vs 消费方；
+      - `check_dependency_usage()` / `check_settings_usage()`——返回不一致项；
+      - `check_whitelist_reasons()`——白名单**每条必须有非空原因**
+        （否则等于永久豁免）；同时检测**白名单已过期**
+        （某条一旦有了消费方，CI 立刻要求删掉它）。
+      回归测试：`tests/unit/test_dependency_usage.py`（29 项），
+      并接入 CI 常规步骤 `Dependency & settings usage check`。
+      **反向验证**：`scripts/verify_test_effectiveness.py`——
+      对 20 个用例逐个施加「语义等价于目标缺陷」的补丁，
+      确认每个用例**确实会失败**再恢复实现；
+      该过程当场抓出 3 个「测试看起来有效、实际无效」的问题。
+      顺带删除 5 个零消费且无计划的依赖：
+      `python-multipart` / `tenacity` / `tomli-w` / `asyncpg` / `greenlet`
+      （后两个来自 `postgres` extra——后端实际用**同步** `psycopg3`）。
+- [ ] `LLM_AGENT_MAX_TOKENS` 接入消费方（L-29）
+      ——已列入 `DEFAULT_WHITELIST` 并写明原因与计划阶段（P4 agent 编排接线）。
+      **白名单是「暂缓」不是「豁免」**：CI 会盯着它是否过期，
+      一旦有了消费方就会报错要求删除。
 - [ ] 建立 `scheduled_jobs`、`job_runs`、`job_locks` 表与迁移（PRD 23.3）
 - [ ] 定时综合分析（1h）与日报复盘
 - [ ] 异动触发完整分析流程（PRD 22.6）

@@ -12,7 +12,6 @@ dependencies = [
     "uvicorn[standard]>=0.32",
     "pydantic>=2.9",
     "pydantic-settings>=2.6",
-    "python-multipart>=0.0.12",
     # data
     "sqlalchemy>=2.0.36",
     "alembic>=1.14",
@@ -28,9 +27,16 @@ dependencies = [
     "langgraph>=1.2",
     # utilities
     "ulid-py>=1.1",
-    "tenacity>=9.0",
-    "tomli-w>=1.1",
 ]
+# 注（L-30）：以下依赖曾被声明却**零 import**，已删除——
+#   python-multipart  —— 无任何表单上传端点（PRD 无 form-data 需求）；
+#   tenacity         —— 重试逻辑由 services/llm_retry.py 自实现（需精确控制退避与总预算）；
+#   tomli-w          —— 无 TOML 写回需求（只读 config/base.toml）；
+#   asyncpg/greenlet —— 原属 [postgres] extra，但后端明确用**同步** psycopg3
+#                        （README 技术选型：同步栈更适合批处理语义），
+#                        且 SQLAlchemy 只在 URL 方言里引用 `postgresql+psycopg`。
+# 由 tests/unit/test_dependency_usage.py 的 CI 对账**强制**：
+# 声明的依赖必须至少有一处消费方，否则 CI 直接失败。
 
 [project.optional-dependencies]
 dev = [
@@ -47,10 +53,8 @@ dev = [
     "types-requests>=2.32",
     "alembic>=1.14",
 ]
-postgres = [
-    "asyncpg>=0.30",
-    "greenlet>=3.1",
-]
+# 注（L-30）：原 `[postgres]` extra（asyncpg / greenlet）已删除——
+# 后端用同步 psycopg3，异步驱动从未被使用。
 
 [build-system]
 requires = ["hatchling"]
