@@ -43,6 +43,16 @@ python scripts/sync_model_pricing.py
 调价时**必须递增 `--pricing-version`**——同版本号下单价变了会直接报错，
 避免历史成本的版本号指向新价格。
 
+**成本报表**（只读）汇总已发生的 token 与费用：
+
+```bash
+python scripts/report_llm_costs.py --days 30
+```
+
+按模型 / Agent / 档位 / Prompt 版本 / 调用状态 / 按日分组。
+若报表提示「存在未定价调用」，其费用数字是**下界**而非实际支出——
+先同步单价再解读。
+
 ---
 
 ## 目录
@@ -271,6 +281,7 @@ npm run dev
 | K 线校验 | `python scripts/verify_market_candles.py` |
 | 异动规则回放 | `python scripts/replay_anomaly.py` |
 | 同步模型单价到 `model_pricing` 表 | `python scripts/sync_model_pricing.py` |
+| LLM 成本报表 | `python scripts/report_llm_costs.py` |
 
 ### 前端
 

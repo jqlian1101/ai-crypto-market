@@ -80,6 +80,15 @@ jobs:
       - name: Dependency & settings usage check
         run: pytest tests/unit/test_dependency_usage.py -q
 
+      # 「测试有效吗」的反向验证（L-30 / L-31）。
+      # 一个永远绿的测试比没有测试更危险——它提供**虚假的信心**。
+      # 这里对实现逐个施加「语义等价于目标缺陷」的补丁，
+      # 确认每个用例**确实会失败**。
+      # 这不是可选动作：本工具已连续两次抓到 vacuous pass
+      # （测试看起来在测东西，实际什么都没测）。
+      - name: Test effectiveness (mutation verification)
+        run: python scripts/verify_test_effectiveness.py
+
       - name: Migrations
         run: alembic -c migrations/alembic.ini upgrade head
 

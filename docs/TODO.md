@@ -140,8 +140,23 @@
       与 L-03 同源的「声明未消费」。现由 `record_model_run` 统一发布。
       指标写失败**绝不影响分析任务**——观测通道不能影响业务通道。
       回归测试：`tests/integration/test_llm_metrics.py`（4 项，真库）
-- [ ] 成本分析报表：按模型、Agent、Prompt 版本聚合 token 与费用
-      ——**数据源已就绪**（`model_runs` / `llm_cost_records` 已有真实数据）
+- [x] 成本分析报表：按模型、Agent、Prompt 版本聚合 token 与费用
+      ——**数据源已就绪**（`model_runs` / `llm_cost_records` 已有真实数据），
+      但**长期没有任何东西读它**——又一个「有表无读方」（L-30 那一族）。
+      现新增 `services/cost_report.py` + `scripts/report_llm_costs.py`。
+      **核心纪律：未定价 ≠ 免费**——
+      `estimated_cost_usd` 是 NOT NULL，单价缺失时只能写 0，
+      直接 `SUM` 会把「没登记单价」读成「不花钱」，成本**系统性低估**
+      （与 L-05「键缺失 ≠ 费率为 0」同源）。
+      因此费用**只**累加 `price_snapshot->'priced' == true` 的行；
+      未定价行单独计数并报告其 token 与涉及模型；
+      存在未定价调用时明确声明**总额是下界**，不是实际支出。
+      分组维度：模型 / 档位 / Agent / Prompt 版本 / 调用状态 / 按日。
+      `prompt_version` 与 `status` 需从 `model_runs` **LEFT JOIN** 取
+      （成本表没这两列）；用 LEFT JOIN 而非 INNER JOIN——
+      孤儿成本行被 INNER JOIN 抹掉会让费用**凭空减少**，而读者看不出少了东西。
+      回归测试：`tests/unit/test_cost_report.py`（29 项）
+      + `tests/integration/test_cost_report.py`（8 项，真库）
 
 **重试与修复**
 - [x] 实现 `LLM_MAX_RETRIES` 重试循环（退避，仅对可重试错误）
