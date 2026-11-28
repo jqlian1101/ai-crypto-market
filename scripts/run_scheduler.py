@@ -28,7 +28,7 @@
 from __future__ import annotations
 
 import sys
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from aicrypto.common.clock import now
 from aicrypto.config.market_symbols import resolve_market_symbols
@@ -227,7 +227,19 @@ def main() -> int:
         # 对账回写：扫描 RUNNING 的 job_runs，更新为终态或检测超时
         from aicrypto.services.scheduler_reconcile_db import reconcile_running_jobs
 
-        recon_stats = reconcile_running_jobs(db, now=moment)
+        # 重试清单与常规入队保持一致：标的 × 市场类型（完整清单，而非残留的 analysis_runs）
+        retry_targets = [
+            (symbol, market_type.value)
+            for symbol in symbols
+            for market_type in settings.market_types
+        ]
+        recon_stats = reconcile_running_jobs(
+            db,
+            now=moment,
+            retry_targets=retry_targets,
+            max_retries=settings.SCHEDULER_MAX_RETRIES,
+            retry_base_delay=timedelta(seconds=settings.SCHEDULER_RETRY_BASE_DELAY_SECONDS),
+        )
         db.commit()
 
         print(

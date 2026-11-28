@@ -21,7 +21,15 @@ import structlog
 logger = structlog.get_logger(__name__)
 
 
-def reconcile_job_run(db: Session, job_run: JobRun, *, now: dt.datetime) -> None:
+def reconcile_job_run(
+    db: Session,
+    job_run: JobRun,
+    *,
+    now: dt.datetime,
+    retry_targets: list[tuple[str, str]] | None = None,
+    max_retries: int = 0,
+    retry_base_delay: dt.timedelta = dt.timedelta(seconds=30),
+) -> None:
     """对一个 job_run 进行对账：根据下属 analysis_runs 的终态聚合，更新 job_run。
 
     **流程**：
@@ -73,21 +81,18 @@ def reconcile_job_run(db: Session, job_run: JobRun, *, now: dt.datetime) -> None
 
     # 若为 FAILED，检查是否可重试
     if aggregated_status == "FAILED":
-        from aicrypto.config.settings import get_settings
-        from aicrypto.services.scheduler_enqueue import enqueue_analysis
-        from aicrypto.services.scheduler_reconcile import should_retry, next_retry_at
         from aicrypto.common.ids import new_job_run_id
+        from aicrypto.services.scheduler_enqueue import enqueue_analysis
+        from aicrypto.services.scheduler_reconcile import next_retry_at, should_retry
 
-        settings = get_settings()
         attempt = job_run.attempt or 1
-        max_retries = settings.SCHEDULER_MAX_RETRIES
 
         if should_retry(aggregated_status, attempt, max_retries):
             # 计算下次重试时间
             retry_at = next_retry_at(
                 failed_at=job_run.started_at,
                 attempt=attempt,
-                base=dt.timedelta(seconds=settings.SCHEDULER_RETRY_BASE_DELAY_SECONDS),
+                base=retry_base_delay,
             )
 
             # 创建重试窗口
@@ -104,37 +109,46 @@ def reconcile_job_run(db: Session, job_run: JobRun, *, now: dt.datetime) -> None
             db.add(new_job_run)
             db.flush()
 
-            # 为重试窗口重新入队分析任务
-            # 注：这里需要获取标的和市场类型清单
-            # 从当前 job_run 的 analysis_runs 中提取
-            symbols_to_retry = {run.symbol for run in analysis_runs}
-            market_types_to_retry = {run.market_type for run in analysis_runs}
+            # 为重试窗口按「完整任务清单」重新入队，与常规调度入队口径一致：
+            # 标的 × 市场类型来自调用方传入的清单（而非原窗口残留的 analysis_runs）。
+            if retry_targets is None:
+                logger.warning(
+                    "scheduler_retry_skipped_no_targets",
+                    job_id=job_run.job_id,
+                    job_run_id=job_run.job_run_id,
+                )
+                return
 
-            for symbol in symbols_to_retry:
-                for market_type in market_types_to_retry:
-                    enqueue_analysis(
-                        db,
-                        symbol=symbol,
-                        market_type=market_type,
-                        job_id=job_run.job_id,
-                        scheduled_at=retry_at,
-                        job_run_id=new_job_run.job_run_id,
-                        now=now,
-                        is_backfill=False,
-                    )
+            for symbol, market_type in retry_targets:
+                enqueue_analysis(
+                    db,
+                    symbol=symbol,
+                    market_type=market_type,
+                    job_id=job_run.job_id,
+                    scheduled_at=retry_at,
+                    job_run_id=new_job_run.job_run_id,
+                    now=now,
+                    is_backfill=False,
+                )
 
-            import structlog
-            logger = structlog.get_logger(__name__)
             logger.info(
                 "scheduled_retry",
                 job_id=job_run.job_id,
                 attempt=attempt + 1,
                 retry_at=retry_at,
                 new_job_run_id=new_job_run.job_run_id,
+                targets=len(retry_targets),
             )
 
 
-def reconcile_running_jobs(db: Session, *, now: dt.datetime) -> dict[str, Any]:
+def reconcile_running_jobs(
+    db: Session,
+    *,
+    now: dt.datetime,
+    retry_targets: list[tuple[str, str]] | None = None,
+    max_retries: int = 0,
+    retry_base_delay: dt.timedelta = dt.timedelta(seconds=30),
+) -> dict[str, Any]:
     """对账所有 RUNNING 的 job_runs。
 
     返回统计信息：已完成数、仍运行数、超时数等。
@@ -171,7 +185,14 @@ def reconcile_running_jobs(db: Session, *, now: dt.datetime) -> dict[str, Any]:
             continue
 
         # 有下属分析：只做聚合，终态由 analysis_run 的实际结果决定
-        reconcile_job_run(db, job_run, now=now)
+        reconcile_job_run(
+            db,
+            job_run,
+            now=now,
+            retry_targets=retry_targets,
+            max_retries=max_retries,
+            retry_base_delay=retry_base_delay,
+        )
         if job_run.finished_at is not None:
             reconciled_count += 1
 

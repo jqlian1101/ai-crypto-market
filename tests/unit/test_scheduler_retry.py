@@ -145,22 +145,23 @@ class TestReconcileJobRunWithRetry:
         # Mock scalars 链
         db.scalars.return_value.all.return_value = [analysis_run_1, analysis_run_2]
         
-        # Mock Settings （全局导入路径）
-        with patch("aicrypto.config.settings.get_settings") as mock_get_settings:
-            mock_settings = MagicMock()
-            mock_settings.SCHEDULER_MAX_RETRIES = 2
-            mock_settings.SCHEDULER_RETRY_BASE_DELAY_SECONDS = 30
-            mock_get_settings.return_value = mock_settings
-            
-            with patch("aicrypto.services.scheduler_enqueue.enqueue_analysis"):
-                now = dt.datetime(2026, 11, 28, 10, 5, 0, tzinfo=dt.UTC)
-                
-                # 执行
-                reconcile_job_run(db, original_job_run, now=now)
-                
-                # 验证：应该调用 db.add() 和 db.flush()
-                assert db.add.called, "应该添加新的重试 job_run"
-                assert db.flush.called, "应该 flush 操作"
+        # 重试参数与清单由调用方注入，无需 patch 配置
+        with patch("aicrypto.services.scheduler_enqueue.enqueue_analysis") as mock_enqueue:
+            now = dt.datetime(2026, 11, 28, 10, 5, 0, tzinfo=dt.UTC)
+
+            reconcile_job_run(
+                db,
+                original_job_run,
+                now=now,
+                max_retries=2,
+                retry_base_delay=dt.timedelta(seconds=30),
+                retry_targets=[("BTC", "spot"), ("ETH", "futures")],
+            )
+
+            assert db.add.called, "应该添加新的重试 job_run"
+            assert db.flush.called, "应该 flush 操作"
+            # 每个清单组合各入队一次
+            assert mock_enqueue.call_count == 2
 
 
 class TestRetryJobRunAttributes:

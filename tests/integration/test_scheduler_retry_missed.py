@@ -31,18 +31,11 @@ JOB_ID = "it_test_retry_job"
 T0 = dt.datetime(2026, 11, 28, 10, 0, 0, tzinfo=dt.UTC)
 
 
-@pytest.fixture(autouse=True)
-def _retry_settings(monkeypatch: pytest.MonkeyPatch) -> None:
-    """reconcile_job_run 内部调用 get_settings()，这里注入确定性的重试配置。
-
-    get_settings 在函数内动态导入，因此必须 patch 源模块。
-    """
-    from unittest.mock import MagicMock
-
-    fake = MagicMock()
-    fake.SCHEDULER_MAX_RETRIES = 2
-    fake.SCHEDULER_RETRY_BASE_DELAY_SECONDS = 30
-    monkeypatch.setattr("aicrypto.config.settings.get_settings", lambda: fake)
+RETRY_KW = {
+    "max_retries": 2,
+    "retry_base_delay": dt.timedelta(seconds=30),
+    "retry_targets": [("BTCUSDT", "SPOT"), ("ETHUSDT", "SPOT"), ("SOLUSDT", "SPOT")],
+}
 
 
 @pytest.fixture
@@ -116,7 +109,7 @@ class TestRetryPersistence:
         parent = _failed_parent(db_session, attempt=1)
         now = T0 + dt.timedelta(minutes=5)
 
-        reconcile_job_run(db_session, parent, now=now)
+        reconcile_job_run(db_session, parent, now=now, **RETRY_KW)
         db_session.flush()
 
         assert parent.status == "FAILED"
@@ -130,7 +123,50 @@ class TestRetryPersistence:
     def test_retry_enqueues_analysis_for_each_failed_run(self, db_session: Session) -> None:
         """重试窗口应为每个失败的 (symbol, market_type) 入队一条分析。"""
         parent = _failed_parent(db_session, attempt=1)
-        reconcile_job_run(db_session, parent, now=T0 + dt.timedelta(minutes=5))
+        reconcile_job_run(db_session, parent, now=T0 + dt.timedelta(minutes=5), **RETRY_KW)
+        db_session.flush()
+
+        retry = db_session.scalars(
+            select(JobRun).where(JobRun.job_id == JOB_ID, JobRun.attempt == 2)
+        ).one()
+        queued = db_session.scalars(
+            select(AnalysisRunRecord).where(AnalysisRunRecord.job_run_id == retry.job_run_id)
+        ).all()
+        pairs = sorted((r.symbol, r.market_type) for r in queued)
+        # 完整清单 3 个组合，而非原窗口残留的 2 个
+        assert pairs == [("BTCUSDT", "SPOT"), ("ETHUSDT", "SPOT"), ("SOLUSDT", "SPOT")]
+
+    def test_retry_fills_combinations_missing_from_original(self, db_session: Session) -> None:
+        """原窗口只有 BTC 一条记录（SOL 从未入队），重试应按完整清单补上 SOL。"""
+        parent = JobRun(
+            job_run_id="it-parent-partial",
+            job_id=JOB_ID,
+            idempotency_key=f"{JOB_ID}:partial:{T0.isoformat()}",
+            scheduled_at=T0,
+            started_at=T0,
+            status="RUNNING",
+            attempt=1,
+            is_backfill=False,
+        )
+        db_session.add(parent)
+        db_session.flush()
+        db_session.add(
+            AnalysisRunRecord(
+                run_id="it-run-partial-btc",
+                analysis_id="it-analysis-partial-btc",
+                symbol="BTCUSDT",
+                market_type="SPOT",
+                trigger="SCHEDULED",
+                idempotency_key="it-partial-key-btc",
+                job_run_id=parent.job_run_id,
+                status="FAILED",
+                analysis_mode="LIVE",
+                created_at=T0,
+            )
+        )
+        db_session.flush()
+
+        reconcile_job_run(db_session, parent, now=T0 + dt.timedelta(minutes=5), **RETRY_KW)
         db_session.flush()
 
         retry = db_session.scalars(
@@ -140,13 +176,12 @@ class TestRetryPersistence:
             select(AnalysisRunRecord).where(AnalysisRunRecord.job_run_id == retry.job_run_id)
         ).all()
         symbols = sorted(r.symbol for r in queued)
-        assert symbols == ["BTCUSDT", "ETHUSDT"]
+        assert "SOLUSDT" in symbols, "重试应按完整清单补上原窗口缺失的 SOL"
 
     def test_no_retry_when_attempts_exhausted(self, db_session: Session) -> None:
-        """attempt 已达上限：不应插入重试 job_run。"""
-        # SCHEDULER_MAX_RETRIES 默认 2，attempt=2 时 should_retry 为 False
+        """attempt 已达上限（max_retries=2）：不应插入重试 job_run。"""
         parent = _failed_parent(db_session, attempt=2)
-        reconcile_job_run(db_session, parent, now=T0 + dt.timedelta(minutes=5))
+        reconcile_job_run(db_session, parent, now=T0 + dt.timedelta(minutes=5), **RETRY_KW)
         db_session.flush()
 
         count = db_session.scalar(
