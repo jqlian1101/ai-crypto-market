@@ -85,13 +85,19 @@ def _record_dispatch(db, window: ScheduledWindow, moment: datetime) -> str:
 
     返回新插入的 job_run_id（或已存在的，若幂等键冲突）。
     """
-    from sqlalchemy import insert, select
+    from sqlalchemy import select
+    from sqlalchemy.dialects.postgresql import insert
 
     from aicrypto.common.ids import new_job_run_id
     from aicrypto.infrastructure.database.models.scheduler import JobRun
     from aicrypto.services.scheduler_core import make_idempotency_key
 
     idem_key = make_idempotency_key(window.job_id, window.scheduled_at)
+    # 先查：已存在则直接复用其 job_run_id，避免同一窗口多次 tick 产生不同 ID
+    existing = db.scalar(select(JobRun.job_run_id).where(JobRun.idempotency_key == idem_key))
+    if existing is not None:
+        return existing
+
     job_run_id = new_job_run_id()
     stmt = (
         insert(JobRun)
@@ -142,6 +148,30 @@ def main() -> int:
     missed_count = 0
 
     with session_scope(settings) as db:
+        # 同步 INITIAL_JOBS 到 scheduled_jobs 表，确保 job_runs.job_id 外键不会失败
+        from sqlalchemy.dialects.postgresql import insert
+
+        from aicrypto.infrastructure.database.models.scheduler import ScheduledJob
+
+        for job_def in INITIAL_JOBS:
+            stmt = (
+                insert(ScheduledJob)
+                .values(
+                    job_id=job_def.job_id,
+                    job_type=job_def.job_type,
+                    cron_expr=job_def.cron_expr,
+                    interval_seconds=job_def.interval_seconds,
+                    timezone=job_def.timezone,
+                    timeout_seconds=600,  # 默认 10 分钟
+                    max_backfill_window_seconds=job_def.max_backfill_window_seconds,
+                    enabled=job_def.enabled,
+                    updated_at=moment,
+                )
+                .on_conflict_do_nothing(index_elements=[ScheduledJob.job_id])
+            )
+            db.execute(stmt)
+        db.commit()
+
         for job in INITIAL_JOBS:
             if not job.enabled:
                 continue
@@ -189,12 +219,20 @@ def main() -> int:
                     flush=True,
                 )
 
-    print(
-        f"scheduler_tick_complete: enqueued={enqueued_count} "
-        f"missed={missed_count} duration_ms={round((now() - moment).total_seconds() * 1000)}",
-        flush=True,
-    )
-    return 0
+        # 对账回写：扫描 RUNNING 的 job_runs，更新为终态或检测超时
+        from aicrypto.services.scheduler_reconcile_db import reconcile_running_jobs
+
+        recon_stats = reconcile_running_jobs(db, now=moment)
+        db.commit()
+
+        print(
+            f"scheduler_tick_complete: enqueued={enqueued_count} "
+            f"missed={missed_count} reconciled={recon_stats['reconciled_count']} "
+            f"timeout={recon_stats['timeout_count']} still_running={recon_stats['still_running']} "
+            f"duration_ms={round((now() - moment).total_seconds() * 1000)}",
+            flush=True,
+        )
+        return 0
 
 
 if __name__ == "__main__":
