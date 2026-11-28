@@ -130,19 +130,28 @@ def test_whitelist_has_no_stale_entries() -> None:
         f"白名单过期检测未生效（依赖 {already_consumed} 已有消费方却未被报出）: {problems}"
     )
 
-    # 反向验证：清空白名单后，白名单里那些**确实零消费**的依赖必须被报出来。
-    # 这一步证明「零消费 → 报错」这条链路真的在工作，而不是空转。
-    unconsumed_whitelisted = {
-        entry.key
-        for entry in DEFAULT_WHITELIST
-        if entry.key not in consumed_dists
-        and any(u.distribution == entry.key for u in audit_dependencies())
-    }
-    assert unconsumed_whitelisted, "白名单里应当存在零消费的条目（否则本用例无从验证）"
+    # 反向验证「零消费 → 报错」链路：白名单只包含配置项名，不是依赖包，
+    # 因此这里不能依赖真实仓库里是否存在零消费依赖包（当前为 0）。
+    # 改用合成的未消费依赖直接驱动 check_dependency_usage 的判定逻辑。
+    from aicrypto.config import dependency_audit as da
 
-    problems = check_dependency_usage(whitelist=())
-    for key in unconsumed_whitelisted:
-        assert any(key in p for p in problems), f"零消费依赖 {key} 未被报出——判据失效"
+    synthetic_unconsumed = da.DependencyUsage(
+        distribution="__synthetic_unconsumed__",
+        modules=("__synthetic__",),
+        runtime_imports=(),
+        test_imports=(),
+        other_evidence=(),
+    )
+    original_audit = da.audit_dependencies
+    da.audit_dependencies = lambda root=None: [synthetic_unconsumed]
+    try:
+        problems = da.check_dependency_usage(whitelist=())
+    finally:
+        da.audit_dependencies = original_audit
+
+    assert any("__synthetic_unconsumed__" in p and "零消费" in p for p in problems), (
+        f"零消费依赖未被报出——判据失效: {problems}"
+    )
 
 
 # ---------------------------------------------------------------- 配置对账

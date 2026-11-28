@@ -124,6 +124,8 @@ SCHEDULER_TIMEZONE = { type = "string", default = "UTC", sensitive = false, prd_
 SCHEDULER_MAX_BACKFILL_SECONDS = { type = "int", default = "86400", sensitive = false, prd_section = "调度" }
 SCHEDULER_LOCK_MODE = { type = "string", default = "postgres_advisory", sensitive = false, prd_section = "调度" }
 SCHEDULER_WORKER_POOL = { type = "int", default = "4", sensitive = false, prd_section = "调度" }
+SCHEDULER_MAX_RETRIES = { type = "int", default = "2", sensitive = false, prd_section = "调度" }
+SCHEDULER_RETRY_BASE_DELAY_SECONDS = { type = "int", default = "30", sensitive = false, prd_section = "调度" }
 
 # ---------- 32.4 Freqtrade (P1) ----------
 [freqtrade]
