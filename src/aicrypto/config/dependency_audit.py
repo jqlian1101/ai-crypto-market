@@ -171,8 +171,11 @@ DEFAULT_WHITELIST: tuple[WhitelistEntry, ...] = (
     # ---- P5 调度层 ----
     WhitelistEntry(
         "apscheduler",
-        reason="P5 调度层：采用纯函数 cron 解析，暂不常驻，apscheduler 可选用于后期守护进程化",
-        planned_for="P5",
+        reason=(
+            "P5 决策：调度采用纯函数 cron 解析 + 外部计划任务单次 tick（scripts/run_scheduler.py），"
+            "不引入 apscheduler 常驻进程；若后续需要守护进程化再消费，届时从白名单删除并接入"
+        ),
+        planned_for="P6",
     ),
     # ---- P6 通知 ----
     WhitelistEntry(
