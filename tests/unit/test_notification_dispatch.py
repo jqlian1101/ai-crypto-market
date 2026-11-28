@@ -47,6 +47,14 @@ def _event(fp: str, revision: int = 0) -> SimpleNamespace:
     )
 
 
+def _settings(critical: int = 300, warn: int = 1800) -> SimpleNamespace:
+    """仅含投递编排所需字段的配置替身（冷却秒数必须显式给出，不得依赖默认值）。"""
+    return SimpleNamespace(
+        NOTIFY_COOLDOWN_CRITICAL_SECONDS=critical,
+        NOTIFY_COOLDOWN_WARN_SECONDS=warn,
+    )
+
+
 async def _run(
     monkeypatch: pytest.MonkeyPatch,
     events: list[SimpleNamespace],
@@ -69,7 +77,7 @@ async def _run(
     counts = await dispatch.deliver_pending_anomalies(
         session,  # type: ignore[arg-type]
         object(),  # type: ignore[arg-type]
-        settings=object(),  # type: ignore[arg-type]
+        settings=_settings(),  # type: ignore[arg-type]
     )
     session.mark_kwargs = mark_kwargs  # type: ignore[attr-defined]
     return counts, marked, session
@@ -138,6 +146,31 @@ async def test_mark_delivered_uses_event_revision(monkeypatch: pytest.MonkeyPatc
     assert marked == ["fp_upgraded"]
     assert len(session.mark_kwargs) == 1
     assert session.mark_kwargs[0]["revision"] == 1
+
+
+async def test_configured_cooldown_seconds_reach_mark_delivered(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """NOTIFY_COOLDOWN_* 必须真正传到 Redis TTL 的写入处，而不是被默认值吞掉。"""
+    captured: list[dict[str, Any]] = []
+
+    async def fake_deliver(db: Any, redis: Any, event: Any, *, settings: Any) -> Outcome:
+        return Outcome("SUCCESS")
+
+    async def fake_mark(redis: Any, **kwargs: Any) -> None:
+        captured.append(kwargs)
+
+    monkeypatch.setattr(dispatch, "deliver_anomaly", fake_deliver)
+    monkeypatch.setattr(dispatch, "mark_delivered", fake_mark)
+
+    await dispatch.deliver_pending_anomalies(
+        FakeSession(_rows=[_event("fp_cfg")]),  # type: ignore[arg-type]
+        object(),  # type: ignore[arg-type]
+        settings=_settings(critical=42, warn=777),  # type: ignore[arg-type]
+    )
+
+    assert captured[0]["critical_seconds"] == 42
+    assert captured[0]["warn_seconds"] == 777
 
 
 async def test_zero_revision_is_passed_explicitly(monkeypatch: pytest.MonkeyPatch) -> None:

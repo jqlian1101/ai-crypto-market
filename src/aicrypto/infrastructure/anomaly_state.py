@@ -70,6 +70,8 @@ async def mark_delivered(
     cooldown_key: str,
     severity: str,
     fired_at: dt.datetime,
+    critical_seconds: int | None = None,
+    warn_seconds: int | None = None,
 ) -> None:
     """投递成功后写入去重键与冷却键。
 
@@ -86,7 +88,11 @@ async def mark_delivered(
         pipe.set(
             _cooldown_redis_key(cooldown_key),
             fired_at.isoformat(),
-            ex=int(cooldown_window(severity).total_seconds()),
+            ex=int(
+                cooldown_window(
+                    severity, critical_seconds=critical_seconds, warn_seconds=warn_seconds
+                ).total_seconds()
+            ),
         )
     await pipe.execute()
 

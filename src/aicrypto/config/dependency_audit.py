@@ -250,16 +250,6 @@ DEFAULT_WHITELIST: tuple[WhitelistEntry, ...] = (
         planned_for="P6",
     ),
     WhitelistEntry(
-        "NOTIFY_COOLDOWN_CRITICAL_SECONDS",
-        reason="冷却窗口写死在 domain/anomaly/dedup.py 的 COOLDOWN_*，配置项未接线",
-        planned_for="P6",
-    ),
-    WhitelistEntry(
-        "NOTIFY_COOLDOWN_WARN_SECONDS",
-        reason="冷却窗口写死在 domain/anomaly/dedup.py 的 COOLDOWN_*，配置项未接线",
-        planned_for="P6",
-    ),
-    WhitelistEntry(
         "NOTIFY_AI_MERGE_WINDOW_SECONDS",
         reason="合并等待窗口 30s（PRD 22.4.4.1）未实现",
         planned_for="P6",

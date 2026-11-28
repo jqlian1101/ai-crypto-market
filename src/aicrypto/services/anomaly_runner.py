@@ -110,6 +110,8 @@ async def _run_with_client(symbols: list[str], settings: Settings, redis: Redis)
                     last_fired_at=last_fired,
                     derivatives=derivatives,
                     derivatives_thresholds=derivatives_thresholds,
+                    cooldown_critical_seconds=settings.NOTIFY_COOLDOWN_CRITICAL_SECONDS,
+                    cooldown_warn_seconds=settings.NOTIFY_COOLDOWN_WARN_SECONDS,
                 )
             # 扫描侧只落库，不写去重/冷却 Redis 状态。
             # 去重与冷却必须在「投递成功」后写入（PRD 22.4.4.1），否则投递失败会吞掉告警。

@@ -96,3 +96,26 @@ def test_different_cooldown_key_not_blocked() -> None:
 def test_unknown_severity_rejected() -> None:
     with pytest.raises(ValueError):
         cooldown_window("INFO")
+
+
+def test_injected_cooldown_seconds_override_defaults() -> None:
+    """NOTIFY_COOLDOWN_* 注入后，窗口必须采用注入值而非 PRD 默认值。"""
+    assert cooldown_window("WARN", warn_seconds=60) == dt.timedelta(seconds=60)
+    assert cooldown_window("CRITICAL", critical_seconds=42) == dt.timedelta(seconds=42)
+
+
+def test_injected_zero_cooldown_disables_suppression() -> None:
+    """配置为 0 表示关闭冷却：刚投过也必须放行。"""
+    last = NOW - dt.timedelta(seconds=1)
+    d = _decide(severity="WARN", last_fired_at={KEY: last}, warn_seconds=0)
+    assert d.allowed
+
+
+def test_config_flip_changes_decision_for_same_event() -> None:
+    """同一事件（10 分钟前触发的 WARN）：默认 30 分钟窗口仍在冷却，
+    把 WARN 冷却改成 5 分钟后必须放行。这是「配置真正生效」的直接证据。"""
+    last = NOW - dt.timedelta(minutes=10)
+    before = _decide(severity="WARN", last_fired_at={KEY: last})
+    after = _decide(severity="WARN", last_fired_at={KEY: last}, warn_seconds=300)
+    assert before.reason == "COOLDOWN"
+    assert after.allowed

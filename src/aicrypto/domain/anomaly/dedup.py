@@ -30,10 +30,24 @@ def dedup_key(fingerprint: str, revision: int) -> str:
     return f"dedup:{fingerprint}:{revision}"
 
 
-def cooldown_window(severity: str) -> dt.timedelta:
+def cooldown_window(
+    severity: str,
+    *,
+    critical_seconds: int | None = None,
+    warn_seconds: int | None = None,
+) -> dt.timedelta:
+    """返回 severity 对应的冷却窗口。
+
+    ``critical_seconds`` / ``warn_seconds`` 由调用方从配置注入（NOTIFY_COOLDOWN_*）；
+    未提供时回落到 PRD 默认值。domain 层不直接读取配置，保持纯函数。
+    """
     if severity == "CRITICAL":
+        if critical_seconds is not None:
+            return dt.timedelta(seconds=critical_seconds)
         return COOLDOWN_CRITICAL
     if severity == "WARN":
+        if warn_seconds is not None:
+            return dt.timedelta(seconds=warn_seconds)
         return COOLDOWN_WARN
     raise ValueError(f"不支持的 severity 冷却：{severity}")
 
@@ -47,6 +61,8 @@ def decide_delivery(
     now: dt.datetime,
     delivered_keys: set[str],
     last_fired_at: dict[str, dt.datetime],
+    critical_seconds: int | None = None,
+    warn_seconds: int | None = None,
 ) -> DedupDecision:
     """判定一次投递是否放行。
 
@@ -58,7 +74,10 @@ def decide_delivery(
     # 升级投递（revision > 0）不占用冷却窗口（22.4.4.1 第 3 条）。
     if revision == 0:
         last = last_fired_at.get(cooldown_key)
-        if last is not None and now - last < cooldown_window(severity):
+        window = cooldown_window(
+            severity, critical_seconds=critical_seconds, warn_seconds=warn_seconds
+        )
+        if last is not None and now - last < window:
             return DedupDecision(False, "COOLDOWN")
 
     return DedupDecision(True, "OK")

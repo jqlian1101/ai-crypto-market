@@ -476,8 +476,12 @@ def scan_symbol(
     last_fired_at: dict[str, dt.datetime],
     derivatives: DerivativesInputs | None = None,
     derivatives_thresholds: DerivativesThresholds | None = None,
+    cooldown_critical_seconds: int | None = None,
+    cooldown_warn_seconds: int | None = None,
 ) -> ScanOutcome:
     """对单个合约标的执行一轮扫描。
+
+    冷却秒数由调用方从 ``NOTIFY_COOLDOWN_*`` 注入；未传入时回落到 PRD 默认值。
 
     ``delivered_keys`` / ``last_fired_at`` 由调用方从 Redis 注入；本函数只做纯判定与写库。
     ``derivatives`` 为衍生品规则输入；``None`` 表示未加载，相关规则计入 skipped。
@@ -522,6 +526,8 @@ def scan_symbol(
             now=cutoff,
             delivered_keys=delivered_keys,
             last_fired_at=last_fired_at,
+            critical_seconds=cooldown_critical_seconds,
+            warn_seconds=cooldown_warn_seconds,
         )
         if not decision.allowed:
             suppressed[decision.reason] = suppressed.get(decision.reason, 0) + 1

@@ -60,6 +60,8 @@ async def deliver_pending_anomalies(
                 cooldown_key=event.cooldown_key,
                 severity=event.severity,
                 fired_at=event.detected_at,
+                critical_seconds=settings.NOTIFY_COOLDOWN_CRITICAL_SECONDS,
+                warn_seconds=settings.NOTIFY_COOLDOWN_WARN_SECONDS,
             )
             event.notification_status = "SENT"
             counts["SENT"] += 1
