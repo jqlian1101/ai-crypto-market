@@ -39,8 +39,8 @@ NOW = dt.datetime(2026, 11, 24, 12, 0, 0, tzinfo=UTC)
 
 def _settings() -> Settings:
     return Settings(
-        DATABASE_URL="postgresql+psycopg://u:p@127.0.0.1:5432/db",
-        REDIS_URL="redis://127.0.0.1:6379/0",
+        DATABASE_URL="postgresql+psycopg://u:p@127.0.0.1:15432/db",
+        REDIS_URL="redis://127.0.0.1:16379/0",
         AUTH_ENABLED=False,
         MARKET_SYMBOLS="BTCUSDT",
         MARKET_TYPES=FUTURES,
@@ -230,8 +230,8 @@ async def test_funding_current_check_skipped_for_spot() -> None:
 
     collector = C(
         settings=Settings(
-            DATABASE_URL="postgresql+psycopg://u:p@127.0.0.1:5432/db",
-            REDIS_URL="redis://127.0.0.1:6379/0",
+            DATABASE_URL="postgresql+psycopg://u:p@127.0.0.1:15432/db",
+            REDIS_URL="redis://127.0.0.1:16379/0",
             AUTH_ENABLED=False,
             MARKET_SYMBOLS="BTCUSDT",
             MARKET_TYPES="SPOT",

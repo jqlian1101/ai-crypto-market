@@ -141,6 +141,17 @@ cached_input_per_mtok = 0.20
 effective_from = "2026-11-01"
 source_url = "https://www.anthropic.com/pricing"
 
+# DeepSeek（人民币定价，已按 6.6544 CNY/USD 折算为美元，取高峰时段单价，偏保守）
+# 来源：https://api-docs.deepseek.com/zh-cn/quick_start/pricing（2026-11-28 抓取）
+# 空闲时段单价为高峰的一半；若需精确计费可拆分时段或改为按时段计价。
+[llm.model_pricing."deepseek-flash"]
+provider = "deepseek"
+input_per_mtok = 0.30
+output_per_mtok = 1.20
+cached_input_per_mtok = 0.006
+effective_from = "2026-11-01"
+source_url = "https://api-docs.deepseek.com/zh-cn/quick_start/pricing"
+
 # 调度（23.1.1）：cron 一律按 UTC 解释
 [scheduler]
 timezone = "UTC"

@@ -46,7 +46,7 @@ from pydantic import ValidationError
 
 from aicrypto.common.errors import AICryptoError, ErrorCode
 from aicrypto.config.settings import Settings
-from aicrypto.domain.analysis.agent_output import AgentOutput, ModelTier
+from aicrypto.domain.analysis.agent_output import ModelTier
 from aicrypto.services.agent_registry import AgentSpec
 from aicrypto.services.llm_retry import (
     AttemptOutcome,
@@ -144,22 +144,20 @@ def call_agent(
         return _failed(spec, ErrorCode.LLM_UNAVAILABLE, {"stage": "routing"})
 
     headers = {"Authorization": f"Bearer {secret}"} if secret else {}
-    schema = AgentOutput.model_json_schema()
-
     payload: dict[str, Any] = {
         "model": model,
+        # DeepSeek 思考模式开关：默认开启，显式关闭需传 disabled。
         **(
-            {"enable_thinking": settings.LLM_ENABLE_THINKING}
+            {"thinking": {"type": "enabled" if settings.LLM_ENABLE_THINKING else "disabled"}}
             if settings.LLM_ENABLE_THINKING is not None
             else {}
         ),
         # **单个 Agent 单次最大 token 8k**（PRD 24.2）。
         # Master 也走这个上限——它不是「一个大请求」，而是一次 Agent 调用。
         "max_tokens": settings.LLM_AGENT_MAX_TOKENS,
-        "response_format": {
-            "type": "json_schema",
-            "json_schema": {"name": "agent_output", "schema": schema},
-        },
+        # DeepSeek 仅支持 json_object；Schema 已由 Prompt 模板的 `Schema: {schema}` 给出，
+        # 结构校验仍由 parse_agent_output 负责。
+        "response_format": {"type": "json_object"},
         "messages": messages,
     }
 

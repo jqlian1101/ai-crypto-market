@@ -33,7 +33,7 @@ from sqlalchemy.orm import Session
 
 pytestmark = pytest.mark.integration
 
-DB_URL = "postgresql+psycopg://aicrypto:aicrypto@127.0.0.1:5432/aicrypto"
+DB_URL = "postgresql+psycopg://aicrypto:aicrypto@127.0.0.1:15432/aicrypto"
 
 
 #: 直接引用**迁移模块里的常量**，不在测试里抄一份 SQL。

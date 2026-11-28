@@ -41,7 +41,7 @@ from aicrypto.infrastructure.database.models.report import (
 )
 from aicrypto.services import analysis_worker
 
-DB_URL = "postgresql+psycopg://aicrypto:aicrypto@127.0.0.1:5432/aicrypto"
+DB_URL = "postgresql+psycopg://aicrypto:aicrypto@127.0.0.1:15432/aicrypto"
 MODEL_ID = "e2e-hang-model"
 RUN_ID = "e2e_run_timeout_partial"
 ANALYSIS_ID = "e2e_analysis_timeout_partial"
@@ -179,7 +179,7 @@ def main() -> int:
     settings = Settings(
         _env_file=None,
         DATABASE_URL=DB_URL,
-        REDIS_URL="redis://127.0.0.1:6379/0",
+        REDIS_URL="redis://127.0.0.1:16379/0",
         AUTH_ENABLED=False,
         LLM_CLOUD_BASE_URL=f"http://127.0.0.1:{server.port}/v1",
         LLM_CLOUD_API_KEY="e2e-key",

@@ -48,7 +48,7 @@ from aicrypto.services.partial_result import PARTIAL_BIAS
 
 pytestmark = pytest.mark.integration
 
-DB_URL = "postgresql+psycopg://aicrypto:aicrypto@127.0.0.1:5432/aicrypto"
+DB_URL = "postgresql+psycopg://aicrypto:aicrypto@127.0.0.1:15432/aicrypto"
 
 
 @pytest.fixture
@@ -306,7 +306,7 @@ def test_metering_survives_transaction_rollback(db_env: Session) -> None:
     settings = Settings(
         _env_file=None,
         DATABASE_URL=DB_URL,
-        REDIS_URL="redis://127.0.0.1:6379/0",
+        REDIS_URL="redis://127.0.0.1:16379/0",
         AUTH_ENABLED=False,
         LLM_CLOUD_BASE_URL="https://example.invalid/v1",
         LLM_CLOUD_API_KEY="k",
@@ -354,7 +354,7 @@ def test_partial_result_published_on_model_failure(shared_scope: Session) -> Non
     settings = Settings(
         _env_file=None,
         DATABASE_URL=DB_URL,
-        REDIS_URL="redis://127.0.0.1:6379/0",
+        REDIS_URL="redis://127.0.0.1:16379/0",
         AUTH_ENABLED=False,
         LLM_CLOUD_BASE_URL="https://example.invalid/v1",
         LLM_CLOUD_API_KEY="k",
@@ -409,7 +409,7 @@ def test_schema_failure_does_not_publish_partial_result(shared_scope: Session) -
     settings = Settings(
         _env_file=None,
         DATABASE_URL=DB_URL,
-        REDIS_URL="redis://127.0.0.1:6379/0",
+        REDIS_URL="redis://127.0.0.1:16379/0",
         AUTH_ENABLED=False,
         LLM_CLOUD_BASE_URL="https://example.invalid/v1",
         LLM_CLOUD_API_KEY="k",
@@ -488,7 +488,7 @@ def test_timeout_is_classified_as_timeout_not_call_failure(
     settings = Settings(
         _env_file=None,
         DATABASE_URL=DB_URL,
-        REDIS_URL="redis://127.0.0.1:6379/0",
+        REDIS_URL="redis://127.0.0.1:16379/0",
         AUTH_ENABLED=False,
         LLM_CLOUD_BASE_URL="https://example.invalid/v1",
         LLM_CLOUD_API_KEY="k",

@@ -855,19 +855,15 @@ def generate_report(
     # ---- 第一次调用用的请求体 ----
     payload: dict[str, Any] = {
         "model": model,
+        # DeepSeek 思考模式开关：默认开启，显式关闭需传 disabled。
         **(
-            {"enable_thinking": settings.LLM_ENABLE_THINKING}
+            {"thinking": {"type": "enabled" if settings.LLM_ENABLE_THINKING else "disabled"}}
             if settings.LLM_ENABLE_THINKING is not None
             else {}
         ),
         "max_tokens": settings.LLM_MAX_OUTPUT_TOKENS,
-        "response_format": {
-            "type": "json_schema",
-            "json_schema": {
-                "name": "analysis_report",
-                "schema": schema,
-            },
-        },
+        # DeepSeek 仅支持 json_object；Schema 已写入 Prompt 模板（`Schema: {schema}`）。
+        "response_format": {"type": "json_object"},
         "messages": messages,
     }
 

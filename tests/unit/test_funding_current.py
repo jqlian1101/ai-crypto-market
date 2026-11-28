@@ -315,8 +315,8 @@ async def test_collector_publishes_mark_price_to_shared_store(
     monkeypatch.setattr("aicrypto.services.derivatives_collector.write_funding_current", fake_write)
 
     settings = Settings(
-        DATABASE_URL="postgresql+psycopg://u:p@127.0.0.1:5432/db",
-        REDIS_URL="redis://127.0.0.1:6379/0",
+        DATABASE_URL="postgresql+psycopg://u:p@127.0.0.1:15432/db",
+        REDIS_URL="redis://127.0.0.1:16379/0",
         AUTH_ENABLED=False,
         MARKET_SYMBOLS="BTCUSDT",
         MARKET_TYPES="USDM_FUTURES",
@@ -367,8 +367,8 @@ async def test_collector_publish_failure_does_not_break_ws_loop(
     monkeypatch.setattr("aicrypto.services.derivatives_collector.write_funding_current", fake_write)
 
     settings = Settings(
-        DATABASE_URL="postgresql+psycopg://u:p@127.0.0.1:5432/db",
-        REDIS_URL="redis://127.0.0.1:6379/0",
+        DATABASE_URL="postgresql+psycopg://u:p@127.0.0.1:15432/db",
+        REDIS_URL="redis://127.0.0.1:16379/0",
         AUTH_ENABLED=False,
         MARKET_SYMBOLS="BTCUSDT",
         MARKET_TYPES="USDM_FUTURES",

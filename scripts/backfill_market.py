@@ -39,6 +39,7 @@ logger = get_logger(__name__)
 SOURCE = "REST_BACKFILL"
 PAGE_LIMIT = 1000
 REQUEST_INTERVAL_SECONDS = 0.25  # 简单限速，远低于 Binance 权重上限
+UPSERT_BATCH_SIZE = 2000  # 分批写入，避免单条 INSERT 参数过多导致长时间阻塞
 
 _UPDATE_COLUMNS = (
     "close_time",
@@ -100,14 +101,16 @@ def upsert_rows(settings: Settings, rows: list[dict[str, Any]]) -> int:
     """幂等写入；主键冲突时以 REST 数据覆盖。"""
     if not rows:
         return 0
-    stmt = insert(MarketCandle.__table__).values(rows)
-    update_cols = {col: stmt.excluded[col] for col in _UPDATE_COLUMNS}
-    stmt = stmt.on_conflict_do_update(
-        constraint="pk_market_candles",
-        set_=update_cols,
-    )
     with session_scope(settings) as session:
-        session.execute(stmt)
+        for start in range(0, len(rows), UPSERT_BATCH_SIZE):
+            batch = rows[start : start + UPSERT_BATCH_SIZE]
+            stmt = insert(MarketCandle.__table__).values(batch)
+            update_cols = {col: stmt.excluded[col] for col in _UPDATE_COLUMNS}
+            stmt = stmt.on_conflict_do_update(
+                constraint="pk_market_candles",
+                set_=update_cols,
+            )
+            session.execute(stmt)
     return len(rows)
 
 

@@ -30,8 +30,8 @@ from aicrypto.services.tier_routing import (
 def _settings(**kwargs) -> Settings:
     base = {
         "_env_file": None,
-        "DATABASE_URL": "postgresql+psycopg://x:x@127.0.0.1:5432/x",
-        "REDIS_URL": "redis://127.0.0.1:6379/0",
+        "DATABASE_URL": "postgresql+psycopg://x:x@127.0.0.1:15432/x",
+        "REDIS_URL": "redis://127.0.0.1:16379/0",
         "AUTH_ENABLED": False,
         "LLM_CLOUD_BASE_URL": "https://cloud.invalid/v1",
         "LLM_CLOUD_API_KEY": "cloud-key",

@@ -59,7 +59,7 @@ def _settings(**kwargs) -> Settings:
     base = {
         "_env_file": None,
         "DATABASE_URL": url,
-        "REDIS_URL": "redis://127.0.0.1:6379/0",
+        "REDIS_URL": "redis://127.0.0.1:16379/0",
         "AUTH_ENABLED": False,
         "LLM_CLOUD_BASE_URL": "https://example.invalid/v1",
         "LLM_CLOUD_API_KEY": "cloud-key",

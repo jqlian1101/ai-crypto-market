@@ -100,7 +100,7 @@ def test_concurrent_workers_with_retries_account_exactly(
     settings = Settings(
         _env_file=None,
         DATABASE_URL=url,
-        REDIS_URL="redis://127.0.0.1:6379/0",
+        REDIS_URL="redis://127.0.0.1:16379/0",
         AUTH_ENABLED=False,
         LLM_CLOUD_BASE_URL="https://example.invalid/v1",
         LLM_CLOUD_API_KEY="k",
@@ -266,7 +266,7 @@ def test_concurrent_retry_does_not_duplicate_prompt_versions(
     settings = Settings(
         _env_file=None,
         DATABASE_URL=url,
-        REDIS_URL="redis://127.0.0.1:6379/0",
+        REDIS_URL="redis://127.0.0.1:16379/0",
         AUTH_ENABLED=False,
         LLM_CLOUD_BASE_URL="https://example.invalid/v1",
         LLM_CLOUD_API_KEY="k",

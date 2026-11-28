@@ -82,8 +82,8 @@ def handler_ok(payload: dict[str, Any] | None = None) -> Any:
 def _settings(**overrides: Any) -> Settings:
     base: dict[str, Any] = {
         "_env_file": None,
-        "DATABASE_URL": "postgresql+psycopg://x:x@127.0.0.1:5432/x",
-        "REDIS_URL": "redis://127.0.0.1:6379/0",
+        "DATABASE_URL": "postgresql+psycopg://x:x@127.0.0.1:15432/x",
+        "REDIS_URL": "redis://127.0.0.1:16379/0",
         "AUTH_ENABLED": False,
         "LLM_CLOUD_BASE_URL": BASE_URL,
         "LLM_CLOUD_API_KEY": "sk-test",
@@ -199,8 +199,8 @@ def test_request_carries_agent_max_tokens(context: AgentCallContext) -> None:
     assert captured["max_tokens"] == 8000
 
 
-def test_request_uses_json_schema_response_format(context: AgentCallContext) -> None:
-    """请求必须声明 JSON Schema 输出格式——否则模型会自由发挥。"""
+def test_request_uses_json_object_response_format(context: AgentCallContext) -> None:
+    """请求必须声明 JSON 输出格式（DeepSeek 仅支持 json_object）。"""
     captured: dict[str, Any] = {}
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -208,8 +208,20 @@ def test_request_uses_json_schema_response_format(context: AgentCallContext) -> 
         return httpx.Response(200, json=_chat_response(json.dumps(_valid_payload())))
 
     _call(_settings(), context, handler)
-    assert captured["response_format"]["type"] == "json_schema"
-    assert "schema" in captured["response_format"]["json_schema"]
+    assert captured["response_format"] == {"type": "json_object"}
+
+
+def test_request_maps_thinking_flag_to_deepseek_format(context: AgentCallContext) -> None:
+    """LLM_ENABLE_THINKING=false 必须映射为 DeepSeek 的 thinking.disabled。"""
+    captured: dict[str, Any] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured.update(json.loads(request.content))
+        return httpx.Response(200, json=_chat_response(json.dumps(_valid_payload())))
+
+    _call(_settings(LLM_ENABLE_THINKING=False), context, handler)
+    assert captured["thinking"] == {"type": "disabled"}
+    assert "enable_thinking" not in captured
 
 
 def test_request_carries_authorization_header(context: AgentCallContext) -> None:

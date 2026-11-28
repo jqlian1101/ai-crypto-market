@@ -16,7 +16,7 @@ CI 之所以没这个问题，是因为 CI 的 ``env:`` 段直接注入**进程�
 1. 进程环境变量 ``ANALYSIS_TEST_DATABASE_URL`` / ``ANOMALY_TEST_DATABASE_URL``
    （CI 走这条；也允许本地临时覆盖）；
 2. 项目根目录 ``.env`` 的 ``DATABASE_URL``；
-3. 内置默认值 ``postgresql+psycopg://aicrypto:aicrypto@127.0.0.1:5432/aicrypto``
+3. 内置默认值 ``postgresql+psycopg://aicrypto:aicrypto@127.0.0.1:15432/aicrypto``
    （与 ``docker-compose.yml`` 的容器一致）。
 
 **为什么不额外建一个 ``aicrypto_test`` 库**
@@ -42,7 +42,7 @@ TEST_DB_URL_KEYS = (
     "ANOMALY_TEST_DATABASE_URL",
 )
 
-DEFAULT_TEST_DB_URL = "postgresql+psycopg://aicrypto:aicrypto@127.0.0.1:5432/aicrypto"
+DEFAULT_TEST_DB_URL = "postgresql+psycopg://aicrypto:aicrypto@127.0.0.1:15432/aicrypto"
 
 _PROJECT_ROOT = pathlib.Path(__file__).resolve().parents[2]
 

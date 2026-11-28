@@ -27,7 +27,7 @@ def test_analysis_lifecycle(monkeypatch: pytest.MonkeyPatch) -> None:
     if not url:
         pytest.skip("设置 ANALYSIS_TEST_DATABASE_URL 以执行 PostgreSQL 集成测试")
     settings = Settings(
-        _env_file=None, DATABASE_URL=url, REDIS_URL="redis://127.0.0.1:6379/0", AUTH_ENABLED=False
+        _env_file=None, DATABASE_URL=url, REDIS_URL="redis://127.0.0.1:16379/0", AUTH_ENABLED=False
     )
     engine = create_engine(url)
     with engine.connect() as connection:

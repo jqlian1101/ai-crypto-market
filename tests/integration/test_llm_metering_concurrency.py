@@ -73,7 +73,7 @@ def concurrent_settings(db_env: str) -> Settings:
     return Settings(
         _env_file=None,
         DATABASE_URL=db_env,
-        REDIS_URL="redis://127.0.0.1:6379/0",
+        REDIS_URL="redis://127.0.0.1:16379/0",
         AUTH_ENABLED=False,
         LLM_CLOUD_BASE_URL="https://example.invalid/v1",
         LLM_CLOUD_API_KEY="test-key",

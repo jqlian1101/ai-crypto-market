@@ -100,7 +100,7 @@ def settings(db_env: Session) -> Settings:
     return Settings(
         _env_file=None,
         DATABASE_URL=os.getenv("ANALYSIS_TEST_DATABASE_URL", ""),
-        REDIS_URL="redis://127.0.0.1:6379/0",
+        REDIS_URL="redis://127.0.0.1:16379/0",
         AUTH_ENABLED=False,
         LLM_CLOUD_BASE_URL="https://example.invalid/v1",
         LLM_CLOUD_API_KEY="test-key",
