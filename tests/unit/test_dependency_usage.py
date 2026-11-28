@@ -655,3 +655,39 @@ def test_toolchain_excluded_from_audit(tmp_path: Path) -> None:
     distributions = {usage.distribution for usage in audit_dependencies(repo)}
     assert "pytest" not in distributions
     assert "httpx" in distributions
+
+
+def test_settings_held_via_or_default_is_counted_as_consumer() -> None:
+    """反向验证：``self.s = s or get_settings()`` 持有的 Settings 必须被识别。
+
+    这是最常见的写法；此前审计只认无 ``or`` 的赋值，导致
+    ``DistributedLock`` 对 ``SCHEDULER_LOCK_MODE`` 的真实消费被漏计。
+    """
+    from aicrypto.config.dependency_audit import _settings_instance_attributes
+
+    tree = ast.parse(
+        textwrap.dedent(
+            """
+            class A:
+                def __init__(self, s=None):
+                    self.settings = s or get_settings()
+            """
+        )
+    )
+    assert "settings" in _settings_instance_attributes(tree)
+
+
+def test_unrelated_or_default_is_not_a_settings_holder() -> None:
+    """反例：与 Settings 无关的 ``x or 'default'`` 不得被误判为配置持有者（防误报）。"""
+    from aicrypto.config.dependency_audit import _settings_instance_attributes
+
+    tree = ast.parse(
+        textwrap.dedent(
+            """
+            class A:
+                def __init__(self, s=None):
+                    self.name = s or "default"
+            """
+        )
+    )
+    assert "name" not in _settings_instance_attributes(tree)

@@ -266,6 +266,7 @@ DEFAULT_WHITELIST: tuple[WhitelistEntry, ...] = (
     ),
     # ---- P5 调度层（配置项） ----
     # SCHEDULER_ENABLED: 已被 scripts/run_scheduler.py 消费，从白名单删除
+    # SCHEDULER_LOCK_MODE: 已被 scheduler_lock.py 消费（分布式锁已落地），从白名单删除
     WhitelistEntry(
         "SCHEDULER_TIMEZONE",
         reason="P5 调度层：计划扩展多时区支持时消费",
@@ -274,11 +275,6 @@ DEFAULT_WHITELIST: tuple[WhitelistEntry, ...] = (
     WhitelistEntry(
         "SCHEDULER_MAX_BACKFILL_SECONDS",
         reason="P5 调度层尚未开工（补跑机制 PRD 23.1.4）",
-        planned_for="P5",
-    ),
-    WhitelistEntry(
-        "SCHEDULER_LOCK_MODE",
-        reason="P5 调度层尚未开工（任务锁 PRD 23.1.4）",
         planned_for="P5",
     ),
     WhitelistEntry(
@@ -708,7 +704,18 @@ def _settings_instance_attributes(tree: ast.AST) -> set[str]:
                 ):
                     continue
                 value = node.value
-                if isinstance(value, ast.Name):
+                # ``self.s = s or get_settings()`` 是最常见的写法，必须识别。
+                # 收紧判据：只认 operand 中含 get_settings()/resolve_settings() 调用的 or 表达式，
+                # 避免把与 Settings 无关的 ``x or y`` 误判为配置持有者。
+                if isinstance(value, ast.BoolOp):
+                    if any(
+                        isinstance(v, ast.Call)
+                        and getattr(v.func, "attr", getattr(v.func, "id", ""))
+                        in ("get_settings", "resolve_settings")
+                        for v in value.values
+                    ):
+                        attributes.add(assign_target.attr)
+                elif isinstance(value, ast.Name):
                     attributes.add(assign_target.attr)
                 elif isinstance(value, ast.Call):
                     func = value.func
