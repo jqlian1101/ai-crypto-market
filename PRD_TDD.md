@@ -4606,9 +4606,9 @@ config/
 | `NOTIFY_DELIVERY_MODE` | `broadcast` | `broadcast` / `first_success` / `severity_routing` |
 | `NOTIFY_SEVERITY_ROUTING` | — | 如 `CRITICAL:wecom_app,INFO:feishu` |
 | `NOTIFY_QUOTA_COUNTING_MODE` | `per_event` | 多渠道是否重复计数（22.4.4.2） |
-| `NOTIFY_DEDUP_TTL_SECONDS` | `86400` | 指纹去重 TTL |
-| `NOTIFY_COOLDOWN_CRITICAL_SECONDS` | `300` | |
-| `NOTIFY_COOLDOWN_WARN_SECONDS` | `1800` | |
+| `NOTIFY_DEDUP_TTL_SECONDS` | `86400` | 指纹去重 TTL；`0` 表示关闭去重（不写去重键） |
+| `NOTIFY_COOLDOWN_CRITICAL_SECONDS` | `300` | 同 key CRITICAL 冷却窗口；`0` 表示关闭冷却 |
+| `NOTIFY_COOLDOWN_WARN_SECONDS` | `1800` | 同 key WARN 冷却窗口；`0` 表示关闭冷却 |
 | `NOTIFY_MAX_RETRIES` | `4` | 22.4.5 |
 | `NOTIFY_RETRY_BACKOFF` | `1s,3s,10s,30s` | |
 | `NOTIFY_AI_MERGE_WINDOW_SECONDS` | `30` | 首投与 AI 解读的合并等待窗口（22.4.4.1 规则 5） |
