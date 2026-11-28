@@ -380,8 +380,16 @@
       **白名单条目已删除**——CI 已确认它被真实消费
 - [ ] 建立 `scheduled_jobs`、`job_runs`、`job_locks` 表与迁移（PRD 23.3）
 - [ ] 定时综合分析（1h）与日报复盘
+  - [x] 日报走 DEEP 档：`analysis_daily` 入队 `trigger=RETROSPECTIVE`，
+        `tier_for_trigger` 解析为 DEEP（PRD 24.3）。其余定时任务保持 `SCHEDULED`/STANDARD。
+        见 `services/scheduler_enqueue.py`，单测 `TestTriggerForJob`（含注入缺陷反向验证）。
 - [ ] 异动触发完整分析流程（PRD 22.6）
-- [ ] 异动扫描定时化（当前靠 `run_anomaly_scan.py` 手动执行）
+- [x] 异动扫描定时化（PRD 23.1.2）
+  - 守护进程注册 `anomaly_scan` 间隔任务，间隔读 `ANOMALY_SCAN_INTERVAL_SECONDS`（默认 60s）。
+  - 与分析调度解耦；锁与去重由 `run_anomaly_scan_once` 的 Redis 锁负责；`SKIPPED_LOCKED` 视为正常。
+  - 已在真实环境验证：守护进程按 60s 触发 1 次，结果 `COMPLETE`，扫描后锁已释放。
+  - 仍待验证：长期（数小时）稳定运行；异动事件真实落库与投递。
+  - 已从依赖审计白名单移除 `ANOMALY_SCAN_INTERVAL_SECONDS`。
 - [ ] 补跑机制：错过任务记录为 `MISSED`，补跑标记 `BACKFILL`，不占实时配额
 - [ ] 关机恢复：优先补数据，再生成当前分析（PRD 20.2 第 12 条）
 - [ ] 幂等与任务锁
