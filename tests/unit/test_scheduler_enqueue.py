@@ -44,6 +44,31 @@ class TestEnqueueIdempotency:
         assert key1 != key2
 
 
+class TestTriggerForJob:
+    """日报任务必须走 DEEP 档（PRD 24.3）。
+
+    断言的是 trigger 与 tier_for_trigger 的组合结果，
+    而不是只断言字符串，否则映射与档位规则脱节也不会被发现。
+    """
+
+    def test_daily_job_resolves_to_deep(self) -> None:
+        from aicrypto.services.scheduler_enqueue import trigger_for_job
+        from aicrypto.services.tier_routing import tier_for_trigger
+
+        trigger = trigger_for_job("analysis_daily")
+        assert trigger == "RETROSPECTIVE"
+        assert tier_for_trigger(trigger).name == "TIER_DEEP"
+
+    def test_intraday_jobs_stay_standard(self) -> None:
+        from aicrypto.services.scheduler_enqueue import trigger_for_job
+        from aicrypto.services.tier_routing import tier_for_trigger
+
+        for job_id in ("analysis_1h", "analysis_15m", "analysis_4h"):
+            trigger = trigger_for_job(job_id)
+            assert trigger == "SCHEDULED", job_id
+            assert tier_for_trigger(trigger).name == "TIER_STANDARD", job_id
+
+
 class TestEnqueueAnalysis:
     """入队分析任务。
 
