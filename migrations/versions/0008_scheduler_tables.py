@@ -6,7 +6,7 @@ PRD 第 23 章（调度与定时分析）与 30.7 节（字段定义）。
 
 1. `scheduled_jobs`：任务定义表，每行一个任务（如 `analysis_1h`），
    包含 cron / interval 表达式、依赖链、超时与推送策略。
-   
+
 2. `job_runs`：执行记录表，每行一次调度执行。幂等键为
    `{job_id}:{scheduled_at}`，由唯一约束保证同一窗口仅一条记录。
 

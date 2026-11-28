@@ -28,15 +28,14 @@
 from __future__ import annotations
 
 import sys
-from datetime import UTC, datetime
+from datetime import datetime
 
 from aicrypto.common.clock import now
 from aicrypto.config.market_symbols import resolve_market_symbols
 from aicrypto.config.settings import get_settings
 from aicrypto.infrastructure.database.session import session_scope
-from aicrypto.services.scheduler_core import JobSchedule, compute_backfill_windows
+from aicrypto.services.scheduler_core import JobSchedule, ScheduledWindow, compute_backfill_windows
 from aicrypto.services.scheduler_enqueue import enqueue_analysis
-
 
 # 初始任务清单（硬编码，后期改为从数据库读取）
 INITIAL_JOBS = [
@@ -91,19 +90,23 @@ def _record_dispatch(db, window: ScheduledWindow, moment: datetime) -> None:
     from aicrypto.services.scheduler_core import make_idempotency_key
 
     idem_key = make_idempotency_key(window.job_id, window.scheduled_at)
-    stmt = insert(JobRun).values(
-        job_run_id=new_job_run_id(),
-        job_id=window.job_id,
-        idempotency_key=idem_key,
-        scheduled_at=window.scheduled_at,
-        started_at=moment,
-        status="RUNNING",
-        is_backfill=window.is_backfill,
-    ).on_conflict_do_nothing(index_elements=[JobRun.idempotency_key])
+    stmt = (
+        insert(JobRun)
+        .values(
+            job_run_id=new_job_run_id(),
+            job_id=window.job_id,
+            idempotency_key=idem_key,
+            scheduled_at=window.scheduled_at,
+            started_at=moment,
+            status="RUNNING",
+            is_backfill=window.is_backfill,
+        )
+        .on_conflict_do_nothing(index_elements=[JobRun.idempotency_key])
+    )
     db.execute(stmt)
 
 
-
+def _last_success_scheduled_at(db, job_id: str) -> datetime | None:
     """读取该任务最近一次成功执行的计划时间（job_runs.scheduled_at）。"""
     from sqlalchemy import func, select
 
@@ -120,21 +123,21 @@ def _record_dispatch(db, window: ScheduledWindow, moment: datetime) -> None:
 def main() -> int:
     """单次调度 tick，计算并入队应该执行的任务。"""
     settings = get_settings()
-    
+
     if not settings.SCHEDULER_ENABLED:
         print("scheduler_disabled: SCHEDULER_ENABLED=false", flush=True)
         return 0
-    
+
     moment = now()
     symbols = resolve_market_symbols(settings)
     enqueued_count = 0
     missed_count = 0
-    
+
     with session_scope(settings) as db:
         for job in INITIAL_JOBS:
             if not job.enabled:
                 continue
-            
+
             # 上次成功执行的计划时间：从 job_runs 读取，避免每次 tick 都回溯窗口
             last_success_at = _last_success_scheduled_at(db, job.job_id)
 
@@ -143,7 +146,7 @@ def main() -> int:
                 now=moment,
                 last_success_at=last_success_at,
             )
-            
+
             # 入队待执行窗口
             for window in windows:
                 # 每个窗口一个 SAVEPOINT：单窗口失败只回滚它自己，不影响其他窗口
@@ -169,14 +172,14 @@ def main() -> int:
                         file=sys.stderr,
                         flush=True,
                     )
-            
+
             missed_count += len(missed_windows)
             if missed_windows:
                 print(
                     f"scheduler_missed: job_id={job.job_id} windows={missed_windows}",
                     flush=True,
                 )
-    
+
     print(
         f"scheduler_tick_complete: enqueued={enqueued_count} "
         f"missed={missed_count} duration_ms={round((now() - moment).total_seconds() * 1000)}",

@@ -5,7 +5,7 @@ from __future__ import annotations
 import datetime as dt
 from typing import Any
 
-from sqlalchemy import Text, UniqueConstraint, ForeignKey, text
+from sqlalchemy import ForeignKey, Text, UniqueConstraint, text
 from sqlalchemy.dialects.postgresql import ARRAY, JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -44,18 +44,14 @@ class ScheduledJob(Base):
     timeout_seconds: Mapped[int] = mapped_column(nullable=False, server_default="600")
     max_retries: Mapped[int] = mapped_column(nullable=False, server_default="3")
     # 补跑上限（默认 24h）
-    max_backfill_window_seconds: Mapped[int] = mapped_column(
-        nullable=False, server_default="86400"
-    )
+    max_backfill_window_seconds: Mapped[int] = mapped_column(nullable=False, server_default="86400")
     # 若任务产出通知事件，记录其类型（ANOMALY / SCHEDULED_REPORT / SYSTEM_ALERT）
     push_event_type: Mapped[str | None] = mapped_column(Text, nullable=True)
     # 推送模式（AGGREGATE / BROADCAST 等）
     push_mode: Mapped[str] = mapped_column(Text, nullable=False, server_default="AGGREGATE")
     enabled: Mapped[bool] = mapped_column(nullable=False, server_default=text("true"))
     # 任务私有配置（如 `analysis_1h` 的 agent 列表、threshold 等）
-    config: Mapped[Any] = mapped_column(
-        JSONB, nullable=False, server_default=text("'{}'::jsonb")
-    )
+    config: Mapped[Any] = mapped_column(JSONB, nullable=False, server_default=text("'{}'::jsonb"))
     updated_at: Mapped[dt.datetime] = mapped_column(TimestampType, nullable=False)
 
     __table_args__ = (

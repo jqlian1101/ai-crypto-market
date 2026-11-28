@@ -171,7 +171,7 @@ DEFAULT_WHITELIST: tuple[WhitelistEntry, ...] = (
     # ---- P5 调度层 ----
     WhitelistEntry(
         "apscheduler",
-        reason="P5 调度层尚未开工；接入 scheduled_jobs/job_runs/job_locks 时消费",
+        reason="P5 调度层：采用纯函数 cron 解析，暂不常驻，apscheduler 可选用于后期守护进程化",
         planned_for="P5",
     ),
     # ---- P6 通知 ----
@@ -286,14 +286,10 @@ DEFAULT_WHITELIST: tuple[WhitelistEntry, ...] = (
         planned_for="P6",
     ),
     # ---- P5 调度层（配置项） ----
-    WhitelistEntry(
-        "SCHEDULER_ENABLED",
-        reason="P5 调度层尚未开工",
-        planned_for="P5",
-    ),
+    # SCHEDULER_ENABLED: 已被 scripts/run_scheduler.py 消费，从白名单删除
     WhitelistEntry(
         "SCHEDULER_TIMEZONE",
-        reason="P5 调度层尚未开工",
+        reason="P5 调度层：计划扩展多时区支持时消费",
         planned_for="P5",
     ),
     WhitelistEntry(

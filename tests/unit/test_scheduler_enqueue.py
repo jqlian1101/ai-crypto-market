@@ -14,7 +14,7 @@ from aicrypto.services.scheduler_core import make_idempotency_key
 
 class TestEnqueueIdempotency:
     """入队幂等性。
-    
+
     由于 `enqueue_analysis` 依赖 ORM 和 `create_run`，完整测试需集成测试框架。
     本处仅验证幂等键的生成与反解。
     """
@@ -46,12 +46,12 @@ class TestEnqueueIdempotency:
 
 class TestEnqueueAnalysis:
     """入队分析任务。
-    
+
     完整单元测试需要：
       - mock `create_run` 返回值；
       - mock ORM session；
       - 验证 UPDATE 语句中 `analysis_mode=BACKFILL` 的设置。
-      
+
     由于 shell 不可用，这些集成测试无法在 CI 中执行。
     本处仅记录预期行为。
     """

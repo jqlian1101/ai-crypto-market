@@ -24,9 +24,7 @@
 from __future__ import annotations
 
 import datetime as dt
-import re
 from dataclasses import dataclass
-from typing import Any
 
 
 @dataclass(frozen=True)
@@ -99,34 +97,34 @@ def next_cron_times(
 
     **实现说明**：本函数暂不引入 croniter / APScheduler，
     而是手工实现基础 5 字段 cron 解析，逐分钟迭代。
-    
+
     cron 格式：``minute hour day month weekday``（标准 5 字段）
     - `*` = 任意值；
     - 数字 = 精确值；
     - `*/N` = 每 N 个单位；
     - `a-b` = 范围；
     - `a,b,c` = 列表。
-    
+
     **限制**：本版本实现简化版，仅支持常见模式（无星期几复杂逻辑）。
     复杂 cron（含 ? / L / W）暂不支持。
-    
+
     参数：
       cron_expr: "5 * * * *" (每小时第 5 分钟)
       after: 搜索起点（UTC）
       max_count: 最多返回多少个触发时间
-      
+
     返回：排序的 datetime 列表（UTC，分钟精度）。
     """
     # 简易实现：逐分钟迭代，检查是否匹配 cron 模式
     times: list[dt.datetime] = []
-    
+
     # 解析 5 字段
     fields = cron_expr.split()
     if len(fields) != 5:
         raise ValueError(f"Invalid cron format (expect 5 fields): {cron_expr}")
-    
+
     minute_str, hour_str, day_str, month_str, weekday_str = fields
-    
+
     # 迭代搜索（逐分钟）。weekday 按**当前候选时刻**计算，不得复用 after 的星期。
     # cron 星期：0=Sunday..6=Saturday；Python weekday()：0=Monday..6=Sunday。
     current = after.replace(second=0, microsecond=0) + dt.timedelta(minutes=1)
@@ -143,31 +141,31 @@ def next_cron_times(
         ):
             times.append(current)
         current += dt.timedelta(minutes=1)
-    
+
     return times
 
 
 def _matches_field(value: int, pattern: str, min_val: int, max_val: int) -> bool:
     """检查数值是否匹配 cron 字段模式。
-    
+
     支持：*, N, */N, a-b, a,b,c
     """
     if pattern == "*":
         return True
-    
+
     if pattern.startswith("*/"):
         step = int(pattern[2:])
         return (value - min_val) % step == 0
-    
+
     if "-" in pattern:
         # 范围：a-b
         a, b = pattern.split("-")
         return int(a) <= value <= int(b)
-    
+
     if "," in pattern:
         # 列表：a,b,c
         return any(value == int(v) for v in pattern.split(","))
-    
+
     # 单个数字
     return value == int(pattern)
 
@@ -182,17 +180,17 @@ def compute_backfill_windows(
 
     返回：
       (windows, missed_windows)
-      
+
       windows: 应该执行的窗口列表（包含补跑与当前）
       missed_windows: 超出补跑上限而被记录为 MISSED 的窗口
     """
     if schedule.job_type != "CRON":
         # INTERVAL / EVENT / MANUAL 不涉及补跑
         return [], []
-    
+
     if schedule.cron_expr is None:
         raise ValueError(f"CRON job {schedule.job_id} has no cron_expr")
-    
+
     if last_success_at is None:
         # 无成功记录（首次运行 / 新任务）：不做历史回溯，只取最近一个已到期窗口。
         # 否则 analysis_15m 首次启动会一次性入队约 96 个窗口 × 标的 × 市场。
@@ -208,7 +206,7 @@ def compute_backfill_windows(
 
     # 计算从 search_from 到 now 之间的所有应该执行的时间
     all_windows = next_cron_times(schedule.cron_expr, after=search_from, max_count=100)
-    
+
     windows: list[ScheduledWindow] = []
     missed: list[str] = []
 

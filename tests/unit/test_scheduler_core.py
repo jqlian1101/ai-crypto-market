@@ -1,4 +1,4 @@
-"""调度核心函数的单元测试。
+﻿"""调度核心函数的单元测试。
 
 由于 shell 目前不可用，这些测试暂无法在 CI 中执行。
 本地验证需运行：
@@ -8,7 +8,7 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 
 import pytest
 
@@ -106,8 +106,8 @@ class TestBackfillCompute:
         now = datetime(2026, 11, 28, 12, 10, 0, tzinfo=UTC)
         # 10:05 刚执行过
         last_success = datetime(2026, 11, 28, 10, 5, 0, tzinfo=UTC)
-        windows, missed = compute_backfill_windows(job, now=now, last_success_at=last_success)
-        
+        windows, _missed = compute_backfill_windows(job, now=now, last_success_at=last_success)
+
         # 应该只有 11:05 和 12:05 这两次（距 now 足够近）
         # 但 12:05 在未来，不统计
         assert len(windows) >= 1
@@ -127,14 +127,13 @@ class TestBackfillCompute:
         now = datetime(2026, 11, 28, 14, 0, 0, tzinfo=UTC)
         # 2 小时前最后成功
         last_success = datetime(2026, 11, 28, 12, 5, 0, tzinfo=UTC)
-        windows, missed = compute_backfill_windows(job, now=now, last_success_at=last_success)
-        
-        # 12:05 是 2 小时前，超出 1h 窗口，应该标记为 MISSED
-        # 窗口应该从 13:05 开始（距 now 60 分钟内）
-        assert len(missed) > 0
-        # 12:05 的 ISO 时间应该在 missed 列表中
-        expected_missed_iso = datetime(2026, 11, 28, 12, 5, 0, tzinfo=UTC).isoformat()
-        assert any(expected_missed_iso in m for m in missed)
+        windows, _missed = compute_backfill_windows(job, now=now, last_success_at=last_success)
+
+        # 12:05 已成功执行（即 last_success），搜索从其之后开始，不应被计为 MISSED。
+        # 13:05 距 now 55 分钟，在 1h 补跑上限内，应进入 windows 且为补跑。
+        assert _missed == []
+        assert [w.scheduled_at.hour for w in windows] == [13]
+        assert windows[0].is_backfill is True
 
     def test_backfill_flag_within_window(self) -> None:
         """补跑标记：距当前超过 1 分钟但在补跑窗口内。"""
@@ -150,8 +149,8 @@ class TestBackfillCompute:
         now = datetime(2026, 11, 28, 12, 20, 0, tzinfo=UTC)
         # 2 小时前最后成功
         last_success = datetime(2026, 11, 28, 10, 15, 0, tzinfo=UTC)
-        windows, missed = compute_backfill_windows(job, now=now, last_success_at=last_success)
-        
+        windows, _missed = compute_backfill_windows(job, now=now, last_success_at=last_success)
+
         # 10:30, 10:45, 11:00, 11:15, 11:30, 11:45, 12:00, 12:15 都应该在补跑范围
         assert len(windows) > 0
         # 除最后一个（刚到点的）外，都应该是 backfill
@@ -165,6 +164,7 @@ class TestCronFieldMatching:
     def test_wildcard(self) -> None:
         """* 匹配任意值。"""
         from aicrypto.services.scheduler_core import _matches_field
+
         assert _matches_field(0, "*", 0, 59)
         assert _matches_field(30, "*", 0, 59)
         assert _matches_field(59, "*", 0, 59)
@@ -172,12 +172,14 @@ class TestCronFieldMatching:
     def test_single_value(self) -> None:
         """单个数字。"""
         from aicrypto.services.scheduler_core import _matches_field
+
         assert _matches_field(5, "5", 0, 59)
         assert not _matches_field(6, "5", 0, 59)
 
     def test_range(self) -> None:
         """范围 a-b。"""
         from aicrypto.services.scheduler_core import _matches_field
+
         assert _matches_field(10, "5-15", 0, 59)
         assert _matches_field(5, "5-15", 0, 59)
         assert _matches_field(15, "5-15", 0, 59)
@@ -186,6 +188,7 @@ class TestCronFieldMatching:
     def test_step(self) -> None:
         """步长 */N。"""
         from aicrypto.services.scheduler_core import _matches_field
+
         assert _matches_field(0, "*/15", 0, 59)
         assert _matches_field(15, "*/15", 0, 59)
         assert _matches_field(30, "*/15", 0, 59)
@@ -195,6 +198,8 @@ class TestCronFieldMatching:
     def test_list(self) -> None:
         """列表 a,b,c。"""
         from aicrypto.services.scheduler_core import _matches_field
+
         assert _matches_field(5, "5,10,15", 0, 59)
         assert _matches_field(10, "5,10,15", 0, 59)
         assert not _matches_field(7, "5,10,15", 0, 59)
+
