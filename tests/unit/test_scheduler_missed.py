@@ -10,9 +10,7 @@
 from __future__ import annotations
 
 import datetime as dt
-from unittest.mock import MagicMock, patch
-
-import pytest
+from unittest.mock import MagicMock
 
 from aicrypto.infrastructure.database.models.scheduler import JobRun
 
@@ -25,20 +23,20 @@ class TestMissedWindowsRecording:
         from aicrypto.services.scheduler_reconcile_db import record_missed_windows
 
         db = MagicMock()
-        
+
         # Mock scalars 检查不存在
         db.scalar.return_value = None
-        
+
         job_id = "job-daily"
         missed_windows = [
             dt.datetime(2026, 11, 28, 10, 0, 0, tzinfo=dt.UTC),
             dt.datetime(2026, 11, 28, 11, 0, 0, tzinfo=dt.UTC),
         ]
         now = dt.datetime(2026, 11, 28, 12, 0, 0, tzinfo=dt.UTC)
-        
+
         # 执行
         result = record_missed_windows(db, job_id, missed_windows, now)
-        
+
         # 验证：应该插入 2 条记录
         assert result == 2
         assert db.add.call_count == 2
@@ -80,21 +78,21 @@ class TestMissedWindowsRecording:
         from aicrypto.services.scheduler_reconcile_db import record_missed_windows
 
         db = MagicMock()
-        
+
         # Mock scalars：第一次返回 None（不存在），第二次返回一条已存在的记录
         existing_run = MagicMock()
         db.scalar.side_effect = [None, existing_run]
-        
+
         job_id = "job-daily"
         missed_windows = [
             dt.datetime(2026, 11, 28, 10, 0, 0, tzinfo=dt.UTC),
             dt.datetime(2026, 11, 28, 10, 0, 0, tzinfo=dt.UTC),  # 重复
         ]
         now = dt.datetime(2026, 11, 28, 12, 0, 0, tzinfo=dt.UTC)
-        
+
         # 执行
         result = record_missed_windows(db, job_id, missed_windows, now)
-        
+
         # 验证：应该只插入 1 条（第二条被跳过）
         assert result == 1
         assert db.add.call_count == 1
@@ -166,14 +164,14 @@ class TestMissedWindowsCounting:
         from aicrypto.services.scheduler_reconcile_db import record_missed_windows
 
         db = MagicMock()
-        
+
         job_id = "job-daily"
         missed_windows = []
         now = dt.datetime(2026, 11, 28, 12, 0, 0, tzinfo=dt.UTC)
-        
+
         # 执行
         result = record_missed_windows(db, job_id, missed_windows, now)
-        
+
         # 验证：应该不调用 add 或 flush
         assert result == 0
         assert db.add.call_count == 0

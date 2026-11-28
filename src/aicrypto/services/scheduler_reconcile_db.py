@@ -9,14 +9,13 @@ from __future__ import annotations
 import datetime as dt
 from typing import Any
 
+import structlog
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from aicrypto.infrastructure.database.models.report import AnalysisRunRecord
 from aicrypto.infrastructure.database.models.scheduler import JobRun, ScheduledJob
 from aicrypto.services.scheduler_reconcile import aggregate_job_status, is_timed_out
-
-import structlog
 
 logger = structlog.get_logger(__name__)
 
@@ -210,16 +209,16 @@ def record_missed_windows(
     now: dt.datetime,
 ) -> int:
     """将 MISSED 窗口记录到 job_runs 表。
-    
+
     **语义**：
     - 超出补跑上限的计划时间被标记为 MISSED
     - 这些窗口不入队任何分析任务，仅作为历史记录
     - 便于日报统计「有多少个分析窗口被错过」
-    
+
     **幂等性**：
     - 通过 idempotency_key 检查避免重复插入
     - 同一窗口多次调用不会产生重复记录
-    
+
     :param db: 数据库会话
     :param job_id: 任务 ID
     :param missed_windows: 超出补跑上限的计划时间列表

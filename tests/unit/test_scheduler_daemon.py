@@ -2,11 +2,7 @@
 
 from __future__ import annotations
 
-import datetime as dt
 from unittest.mock import MagicMock, patch
-
-import pytest
-from apscheduler.schedulers.base import SchedulerAlreadyRunningError
 
 from aicrypto.services.scheduler_daemon import APSchedulerDaemon
 
@@ -70,7 +66,7 @@ class TestAPSchedulerDaemon:
         with patch("aicrypto.services.scheduler_daemon.get_settings") as mock_get_settings:
             mock_settings = MagicMock()
             mock_get_settings.return_value = mock_settings
-            
+
             daemon = APSchedulerDaemon(settings=mock_settings)
             assert daemon.scheduler is not None
             assert daemon.scheduler.state == 0  # SchedulerState.STOPPED
@@ -80,7 +76,7 @@ class TestAPSchedulerDaemon:
         with patch("aicrypto.services.scheduler_daemon.get_settings") as mock_get_settings:
             mock_settings = MagicMock()
             mock_get_settings.return_value = mock_settings
-            
+
             with patch("aicrypto.services.scheduler_daemon.session_scope") as mock_scope:
                 mock_db = MagicMock()
                 mock_scope.return_value.__enter__.return_value = mock_db
@@ -254,33 +250,35 @@ class TestExecuteSchedulerTick:
         """单次 tick 执行的异常应被捕获，不向外传播。"""
         from aicrypto.services.scheduler_daemon import _execute_scheduler_tick
 
-        with patch("aicrypto.services.scheduler_daemon._run_tick") as mock_tick:
-            with patch("aicrypto.services.scheduler_lock.DistributedLock") as mock_lock_class:
-                mock_lock = MagicMock()
-                mock_lock.acquired = True
-                mock_lock_class.return_value.__enter__.return_value = mock_lock
-                
-                # 模拟异常
-                mock_tick.side_effect = RuntimeError("Database connection failed")
+        with (
+            patch("aicrypto.services.scheduler_daemon._run_tick") as mock_tick,
+            patch("aicrypto.services.scheduler_lock.DistributedLock") as mock_lock_class,
+        ):
+            mock_lock = MagicMock()
+            mock_lock.acquired = True
+            mock_lock_class.return_value.__enter__.return_value = mock_lock
 
-                # 应不抛异常
-                _execute_scheduler_tick("test_job")
+            # 模拟异常
+            mock_tick.side_effect = RuntimeError("Database connection failed")
+
+            # 应不抛异常
+            _execute_scheduler_tick("test_job")
 
     def test_execute_scheduler_tick_logs_success(self):
         """成功执行应记日志。"""
         from aicrypto.services.scheduler_daemon import _execute_scheduler_tick
 
-        with patch(
-            "aicrypto.services.scheduler_daemon._run_tick"
-        ) as mock_tick:
-            with patch("aicrypto.services.scheduler_lock.DistributedLock") as mock_lock_class:
-                mock_lock = MagicMock()
-                mock_lock.acquired = True
-                mock_lock_class.return_value.__enter__.return_value = mock_lock
-                
-                mock_tick.return_value = 0
+        with (
+            patch("aicrypto.services.scheduler_daemon._run_tick") as mock_tick,
+            patch("aicrypto.services.scheduler_lock.DistributedLock") as mock_lock_class,
+        ):
+            mock_lock = MagicMock()
+            mock_lock.acquired = True
+            mock_lock_class.return_value.__enter__.return_value = mock_lock
 
-                _execute_scheduler_tick("test_job")
+            mock_tick.return_value = 0
+
+            _execute_scheduler_tick("test_job")
 
 
 class TestDaemonShutdown:

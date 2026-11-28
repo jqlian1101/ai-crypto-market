@@ -34,12 +34,17 @@ import datetime as dt
 import logging
 import uuid
 from abc import ABC, abstractmethod
-from contextlib import contextmanager
 from dataclasses import dataclass
-from typing import Any
+from types import TracebackType
+from typing import TYPE_CHECKING, Literal
 
 from aicrypto.common.clock import now
-from aicrypto.config.settings import get_settings
+from aicrypto.config.settings import Settings, get_settings
+
+if TYPE_CHECKING:
+    from redis import Redis
+    from sqlalchemy.engine import Connection
+    from sqlalchemy.orm import Session
 
 logger = logging.getLogger(__name__)
 
@@ -62,7 +67,7 @@ class DistributedLockBackend(ABC):
         self,
         job_id: str,
         lock_ttl_seconds: int,
-        owner_id: str,
+        owner_id: str | None = None,
     ) -> LockToken | None:
         """尝试获得锁。
 
@@ -99,7 +104,7 @@ class LocalLock(DistributedLockBackend):
     **警告**：多实例部署时不安全！请使用 POSTGRES_ADVISORY 或其他分布式锁。
     """
 
-    def __init__(self):
+    def __init__(self) -> None:
         self._owner_id = str(uuid.uuid4())[:8]
 
     def acquire(
@@ -145,9 +150,11 @@ class PostgresAdvisoryLock(DistributedLockBackend):
     **缺点**：Postgres 专属；不支持跨数据库；锁 ID 受 64 位限制。
     """
 
-    def __init__(self, db_session):
+    def __init__(self, db_session: Session | Connection) -> None:
         """
-        :param db_session: SQLAlchemy Session 对象
+        :param db_session: SQLAlchemy Session 或 Connection 对象。
+            两者均暴露 ``execute``；advisory lock 绑定在连接上，
+            传 Connection 时必须持有同一连接直到释放。
         """
         self.db = db_session
         self._owner_id = str(uuid.uuid4())[:8]  # 实例 ID
@@ -165,7 +172,7 @@ class PostgresAdvisoryLock(DistributedLockBackend):
         - 锁 ID 基于 job_id 的哈希
         - 在数据库端记录持有者信息（便于排障）
         """
-        from sqlalchemy import func, text
+        from sqlalchemy import text
 
         owner_id = owner_id or self._owner_id
         lock_id = self._hash_lock_id(job_id)
@@ -262,7 +269,7 @@ class RedisLock(DistributedLockBackend):
     **缺点**：需要额外的 Redis 实例；网络延迟；Redis 故障影响。
     """
 
-    def __init__(self, redis_client):
+    def __init__(self, redis_client: Redis) -> None:
         """
         :param redis_client: Redis 客户端对象（如 redis.Redis）
         """
@@ -329,8 +336,13 @@ class RedisLock(DistributedLockBackend):
                 logger.warning(f"锁已过期或不存在: {lock_key}")
                 return False
 
-            # 验证所有权（简化：只检查前缀）
-            if not current_value.decode("utf-8").startswith(token.owner_id):
+            # 验证所有权（简化：只检查前缀）。redis 客户端可能返回 bytes 或 str，两者都需兼容。
+            value_text = (
+                current_value.decode("utf-8")
+                if isinstance(current_value, bytes)
+                else str(current_value)
+            )
+            if not value_text.startswith(token.owner_id):
                 logger.warning(
                     f"无法释放锁（所有权不匹配）: {lock_key} owner={token.owner_id}"
                 )
@@ -385,8 +397,8 @@ class DistributedLock:
         self,
         job_id: str,
         timeout_seconds: int = 30,
-        settings=None,
-    ):
+        settings: Settings | None = None,
+    ) -> None:
         """
         :param job_id: 任务 ID（唯一标识锁资源）
         :param timeout_seconds: 锁的 TTL（防止持有者崩溃永久卡死）
@@ -395,13 +407,16 @@ class DistributedLock:
         self.job_id = job_id
         self.timeout_seconds = timeout_seconds
         self.settings = settings or get_settings()
-        self.backend = None
-        self.token = None
+        self.backend: DistributedLockBackend | None = None
+        self.token: LockToken | None = None
         self.acquired = False
+        self._conn: Connection | None = None
 
-    def __enter__(self):
+    def __enter__(self) -> DistributedLock:
         """进入上下文，尝试获得锁。"""
         self._setup_backend()
+        if self.backend is None:
+            raise RuntimeError("锁后端未初始化")
         self.token = self.backend.acquire(
             self.job_id,
             lock_ttl_seconds=self.timeout_seconds,
@@ -409,7 +424,12 @@ class DistributedLock:
         self.acquired = self.token is not None
         return self
 
-    def __exit__(self, exc_type, exc_val, exc_tb):
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: TracebackType | None,
+    ) -> Literal[False]:
         """离开上下文，释放锁。"""
         try:
             if self.token and self.backend:
@@ -424,7 +444,7 @@ class DistributedLock:
                 self._conn = None
         return False  # 不吞掉异常
 
-    def _setup_backend(self):
+    def _setup_backend(self) -> None:
         """根据配置选择锁后端。"""
         from aicrypto.config.settings import LockMode
 

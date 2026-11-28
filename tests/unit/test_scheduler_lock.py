@@ -5,8 +5,6 @@ from __future__ import annotations
 import datetime as dt
 from unittest.mock import MagicMock, patch
 
-import pytest
-
 from aicrypto.services.scheduler_lock import (
     DistributedLock,
     LockToken,
@@ -178,7 +176,6 @@ class TestDistributedLock:
 
     def test_lock_context_manager_acquire_success(self):
         """上下文管理器成功获得锁。"""
-        from aicrypto.services.scheduler_lock import DistributedLock
 
         with patch.object(PostgresAdvisoryLock, "acquire") as mock_acquire:
             mock_token = LockToken(
@@ -203,7 +200,6 @@ class TestDistributedLock:
 
     def test_lock_context_manager_acquire_failure(self):
         """上下文管理器获取失败。"""
-        from aicrypto.services.scheduler_lock import DistributedLock
 
         with patch.object(PostgresAdvisoryLock, "acquire") as mock_acquire:
             mock_acquire.return_value = None
@@ -222,7 +218,6 @@ class TestDistributedLock:
 
     def test_lock_cleanup_on_exception(self):
         """异常发生时锁仍被释放。"""
-        from aicrypto.services.scheduler_lock import DistributedLock
 
         with patch("aicrypto.services.scheduler_lock.PostgresAdvisoryLock") as mock_lock_class:
             mock_backend = MagicMock()
@@ -245,7 +240,7 @@ class TestDistributedLock:
                     mock_engine.return_value.connect.return_value = mock_conn
 
                     try:
-                        with DistributedLock("test_job") as lock:
+                        with DistributedLock("test_job"):
                             raise ValueError("Test exception")
                     except ValueError:
                         pass

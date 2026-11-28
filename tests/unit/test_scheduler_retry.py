@@ -10,9 +10,7 @@
 from __future__ import annotations
 
 import datetime as dt
-from unittest.mock import MagicMock, patch, call
-
-import pytest
+from unittest.mock import MagicMock, patch
 
 from aicrypto.infrastructure.database.models.scheduler import JobRun
 
@@ -116,7 +114,7 @@ class TestReconcileJobRunWithRetry:
 
         # Mock 数据库和相关对象
         db = MagicMock()
-        
+
         # 创建原 job_run
         original_failed_at = dt.datetime(2026, 11, 28, 10, 0, 0, tzinfo=dt.UTC)
         original_job_run = JobRun(
@@ -128,23 +126,23 @@ class TestReconcileJobRunWithRetry:
             attempt=1,
             status="RUNNING",
         )
-        
+
         # Mock analysis_runs
         analysis_run_1 = MagicMock()
         analysis_run_1.run_id = "arun-1"
         analysis_run_1.symbol = "BTC"
         analysis_run_1.market_type = "spot"
         analysis_run_1.status = "FAILED"
-        
+
         analysis_run_2 = MagicMock()
         analysis_run_2.run_id = "arun-2"
         analysis_run_2.symbol = "ETH"
         analysis_run_2.market_type = "futures"
         analysis_run_2.status = "FAILED"
-        
+
         # Mock scalars 链
         db.scalars.return_value.all.return_value = [analysis_run_1, analysis_run_2]
-        
+
         # 重试参数与清单由调用方注入，无需 patch 配置
         with patch("aicrypto.services.scheduler_enqueue.enqueue_analysis") as mock_enqueue:
             now = dt.datetime(2026, 11, 28, 10, 5, 0, tzinfo=dt.UTC)

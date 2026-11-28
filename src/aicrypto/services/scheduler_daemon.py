@@ -23,10 +23,9 @@
 
 from __future__ import annotations
 
-import datetime as dt
 import logging
 import sys
-from typing import Any
+from typing import TYPE_CHECKING
 
 from apscheduler.executors.pool import ThreadPoolExecutor
 from apscheduler.jobstores.memory import MemoryJobStore
@@ -36,6 +35,9 @@ from apscheduler.triggers.cron import CronTrigger
 from aicrypto.common.clock import now
 from aicrypto.config.settings import Settings, get_settings
 from aicrypto.infrastructure.database.session import session_scope
+
+if TYPE_CHECKING:
+    from aicrypto.infrastructure.database.models.scheduler import ScheduledJob
 
 logger = logging.getLogger(__name__)
 
@@ -50,15 +52,14 @@ class APSchedulerDaemon:
     - 支持优雅关闭
     """
 
-    def __init__(self, settings=None):
+    def __init__(self, settings: Settings | None = None) -> None:
         """
         :param settings: 配置对象（若不提供则自动获取）
         """
-        self.settings = settings or get_settings()
-        self.scheduler = None
-        self._setup_scheduler()
+        self.settings: Settings = settings or get_settings()
+        self.scheduler: BackgroundScheduler = self._build_scheduler()
 
-    def _setup_scheduler(self):
+    def _build_scheduler(self) -> BackgroundScheduler:
         """初始化 APScheduler 调度器。
 
         **配置要点**：
@@ -66,7 +67,7 @@ class APSchedulerDaemon:
         - job_defaults.max_instances=1：同一任务最多 1 个实例（需分布式锁）
         - misfire_grace_time=120s：错过 2 分钟内的 tick 仍视为应执行
         """
-        self.scheduler = BackgroundScheduler(
+        return BackgroundScheduler(
             jobstores={"default": MemoryJobStore()},
             executors={"default": ThreadPoolExecutor(max_workers=4)},
             job_defaults={
@@ -77,7 +78,7 @@ class APSchedulerDaemon:
             timezone="UTC",
         )
 
-    def load_and_register_jobs(self):
+    def load_and_register_jobs(self) -> None:
         """从 scheduled_jobs 表加载任务定义并注册到调度器。
 
         **步骤**：
@@ -114,7 +115,7 @@ class APSchedulerDaemon:
             logger.warning("降级到默认任务清单")
             self._register_default_jobs()
 
-    def _register_single_job(self, job_def):
+    def _register_single_job(self, job_def: ScheduledJob) -> None:
         """注册单个任务。
 
         :param job_def: ScheduledJob ORM 实例
@@ -160,7 +161,7 @@ class APSchedulerDaemon:
                 f"注册任务失败 (job_id={job_def.job_id}): {exc}", exc_info=True
             )
 
-    def _register_default_jobs(self):
+    def _register_default_jobs(self) -> None:
         """使用默认任务清单注册任务（来自 run_scheduler.py）。"""
         from aicrypto.services.scheduler_core import JobSchedule
 
@@ -215,7 +216,7 @@ class APSchedulerDaemon:
             )
             logger.info(f"已注册默认 CRON 任务: {job_def.job_id}")
 
-    def register_anomaly_scan(self):
+    def register_anomaly_scan(self) -> None:
         """注册异动扫描间隔任务（PRD 23.1.2，频率见 ANOMALY_SCAN_INTERVAL_SECONDS）。
 
         与分析调度解耦：异动不占用分析窗口，也不经过 run_scheduler。
@@ -234,7 +235,7 @@ class APSchedulerDaemon:
         )
         logger.info(f"已注册异动扫描任务: interval={interval}s")
 
-    def start(self):
+    def start(self) -> None:
         """启动调度器，进入前台运行（阻塞）。"""
         if not self.scheduler:
             logger.error("调度器未初始化")
@@ -252,7 +253,7 @@ class APSchedulerDaemon:
             self.shutdown()
             raise
 
-    def shutdown(self):
+    def shutdown(self) -> None:
         """优雅关闭调度器。"""
         if self.scheduler and self.scheduler.running:
             logger.info("正在关闭调度器...")
@@ -278,7 +279,7 @@ def _run_tick() -> int:
     return module.main()
 
 
-def _execute_anomaly_scan(job_id: str = "anomaly_scan"):
+def _execute_anomaly_scan(job_id: str = "anomaly_scan") -> None:
     """异动扫描单次执行——由 APScheduler 按 ANOMALY_SCAN_INTERVAL_SECONDS 触发。
 
     - 独立于分析调度：异动不走 run_scheduler / 分析窗口；
@@ -301,7 +302,7 @@ def _execute_anomaly_scan(job_id: str = "anomaly_scan"):
         logger.error(f"异动扫描失败: job_id={job_id} error={exc}", exc_info=True)
 
 
-def _execute_scheduler_tick(job_id: str):
+def _execute_scheduler_tick(job_id: str) -> None:
     """单次调度 tick 的执行函数——由 APScheduler 触发。
 
     **设计要点**：

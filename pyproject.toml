@@ -114,6 +114,11 @@ check_untyped_defs = true
 plugins = ["pydantic.mypy"]
 
 [[tool.mypy.overrides]]
+# apscheduler 未随包提供类型 stubs；仅对该第三方包放宽导入检查，不影响项目自身代码。
+module = ["apscheduler", "apscheduler.*"]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
 module = ["aicrypto.domain.market_intelligence.*", "aicrypto.domain.evaluation.*"]
 disallow_untyped_defs = true
 disallow_untyped_calls = true
