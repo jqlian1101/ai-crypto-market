@@ -78,22 +78,25 @@ INITIAL_JOBS = [
 ]
 
 
-def _record_dispatch(db, window: ScheduledWindow, moment: datetime) -> None:
+def _record_dispatch(db, window: ScheduledWindow, moment: datetime) -> str:
     """记录一个任务窗口的调度：在 job_runs 表插入一行。
 
     这一行标记「该任务在该计划时间被调度了」，用于后续查询上次成功时间。
+
+    返回新插入的 job_run_id（或已存在的，若幂等键冲突）。
     """
-    from sqlalchemy import insert
+    from sqlalchemy import insert, select
 
     from aicrypto.common.ids import new_job_run_id
     from aicrypto.infrastructure.database.models.scheduler import JobRun
     from aicrypto.services.scheduler_core import make_idempotency_key
 
     idem_key = make_idempotency_key(window.job_id, window.scheduled_at)
+    job_run_id = new_job_run_id()
     stmt = (
         insert(JobRun)
         .values(
-            job_run_id=new_job_run_id(),
+            job_run_id=job_run_id,
             job_id=window.job_id,
             idempotency_key=idem_key,
             scheduled_at=window.scheduled_at,
@@ -103,7 +106,12 @@ def _record_dispatch(db, window: ScheduledWindow, moment: datetime) -> None:
         )
         .on_conflict_do_nothing(index_elements=[JobRun.idempotency_key])
     )
-    db.execute(stmt)
+    result = db.execute(stmt)
+    # 若冲突（幂等键已存在），查询已有的 job_run_id
+    if result.rowcount == 0:
+        existing = db.scalar(select(JobRun.job_run_id).where(JobRun.idempotency_key == idem_key))
+        return existing
+    return job_run_id
 
 
 def _last_success_scheduled_at(db, job_id: str) -> datetime | None:
@@ -152,7 +160,7 @@ def main() -> int:
                 # 每个窗口一个 SAVEPOINT：单窗口失败只回滚它自己，不影响其他窗口
                 try:
                     with db.begin_nested():
-                        _record_dispatch(db, window, moment)
+                        job_run_id = _record_dispatch(db, window, moment)
                         for symbol in symbols:
                             for market_type in settings.market_types:
                                 enqueue_analysis(
@@ -161,6 +169,7 @@ def main() -> int:
                                     market_type=market_type.value,
                                     job_id=window.job_id,
                                     scheduled_at=window.scheduled_at,
+                                    job_run_id=job_run_id,
                                     now=moment,
                                     is_backfill=window.is_backfill,
                                 )

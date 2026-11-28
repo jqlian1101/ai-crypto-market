@@ -23,6 +23,10 @@ class AnalysisRunRecord(Base):
     market_type: Mapped[str] = mapped_column(Text, nullable=False)
     trigger: Mapped[str] = mapped_column(Text, nullable=False)
     idempotency_key: Mapped[str | None] = mapped_column(Text)
+    # 所属调度窗口（P5）；手动触发 / 历史数据为 NULL
+    job_run_id: Mapped[str | None] = mapped_column(
+        Text, ForeignKey("job_runs.job_run_id", name="fk_analysis_runs_job_run")
+    )
     status: Mapped[str] = mapped_column(Text, nullable=False, server_default="QUEUED")
     analysis_mode: Mapped[str] = mapped_column(Text, nullable=False, server_default="LIVE")
     market_snapshot_id: Mapped[str | None] = mapped_column(Text)

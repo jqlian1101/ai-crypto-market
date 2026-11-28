@@ -23,6 +23,7 @@ def enqueue_analysis(
     market_type: str,
     job_id: str,
     scheduled_at: dt.datetime,
+    job_run_id: str,
     now: dt.datetime,
     is_backfill: bool = False,
 ) -> dict[str, Any]:
@@ -30,6 +31,7 @@ def enqueue_analysis(
 
     - ``trigger`` 固定为 ``SCHEDULED``；
     - ``analysis_mode``：补跑为 ``BACKFILL``，否则 ``LIVE``；
+    - ``job_run_id`` 是所属的调度窗口记录 ID；
     - 同一幂等键重复入队，``create_run`` 返回已存在的记录。
     """
     return create_run(
@@ -42,4 +44,5 @@ def enqueue_analysis(
             job_id, scheduled_at, symbol=symbol, market_type=market_type
         ),
         analysis_mode="BACKFILL" if is_backfill else "LIVE",
+        job_run_id=job_run_id,
     )
