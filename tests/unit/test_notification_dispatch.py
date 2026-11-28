@@ -47,11 +47,12 @@ def _event(fp: str, revision: int = 0) -> SimpleNamespace:
     )
 
 
-def _settings(critical: int = 300, warn: int = 1800) -> SimpleNamespace:
-    """仅含投递编排所需字段的配置替身（冷却秒数必须显式给出，不得依赖默认值）。"""
+def _settings(critical: int = 300, warn: int = 1800, dedup_ttl: int = 86400) -> SimpleNamespace:
+    """仅含投递编排所需字段的配置替身（TTL 必须显式给出，不得依赖默认值）。"""
     return SimpleNamespace(
         NOTIFY_COOLDOWN_CRITICAL_SECONDS=critical,
         NOTIFY_COOLDOWN_WARN_SECONDS=warn,
+        NOTIFY_DEDUP_TTL_SECONDS=dedup_ttl,
     )
 
 

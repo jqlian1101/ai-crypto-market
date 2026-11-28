@@ -190,3 +190,55 @@ async def test_load_last_fired_reads_cooldown(redis: _FakeRedis) -> None:
 async def test_empty_input_returns_empty(redis: _FakeRedis) -> None:
     assert await st.load_delivered(redis, [], revision=0) == set()
     assert await st.load_last_fired(redis, []) == {}
+
+
+# --------------------------------------------------------------------------
+# NOTIFY_DEDUP_TTL_SECONDS 接线
+# --------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_configured_dedup_ttl_is_written(redis: _FakeRedis) -> None:
+    """注入的去重 TTL 必须真正写入 Redis，而不是被 DEDUP_TTL 默认值吞掉。"""
+    await st.mark_delivered(
+        redis,
+        fingerprint=FP,
+        revision=0,
+        cooldown_key="BTCUSDT:PRICE_PCT_5M",
+        severity="WARN",
+        fired_at=NOW,
+        dedup_ttl_seconds=3600,
+    )
+
+    assert redis.ttls["dedup:ae_abc123:0"] == 3600
+
+
+@pytest.mark.asyncio
+async def test_dedup_ttl_defaults_to_prd_when_not_injected(redis: _FakeRedis) -> None:
+    await st.mark_delivered(
+        redis,
+        fingerprint=FP,
+        revision=0,
+        cooldown_key="BTCUSDT:PRICE_PCT_5M",
+        severity="WARN",
+        fired_at=NOW,
+    )
+
+    assert redis.ttls["dedup:ae_abc123:0"] == int(st.DEDUP_TTL.total_seconds())
+
+
+@pytest.mark.asyncio
+async def test_zero_dedup_ttl_skips_dedup_key_without_error(redis: _FakeRedis) -> None:
+    """配置为 0 表示关闭去重：不写去重键（Redis 会拒绝 EX 0），但冷却键照常写入。"""
+    await st.mark_delivered(
+        redis,
+        fingerprint=FP,
+        revision=0,
+        cooldown_key="BTCUSDT:PRICE_PCT_5M",
+        severity="WARN",
+        fired_at=NOW,
+        dedup_ttl_seconds=0,
+    )
+
+    assert not any(k.startswith("dedup:") for k in redis.store)
+    assert "cooldown:BTCUSDT:PRICE_PCT_5M" in redis.store

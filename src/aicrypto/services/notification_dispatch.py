@@ -62,6 +62,7 @@ async def deliver_pending_anomalies(
                 fired_at=event.detected_at,
                 critical_seconds=settings.NOTIFY_COOLDOWN_CRITICAL_SECONDS,
                 warn_seconds=settings.NOTIFY_COOLDOWN_WARN_SECONDS,
+                dedup_ttl_seconds=settings.NOTIFY_DEDUP_TTL_SECONDS,
             )
             event.notification_status = "SENT"
             counts["SENT"] += 1

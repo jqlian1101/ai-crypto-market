@@ -72,6 +72,7 @@ async def mark_delivered(
     fired_at: dt.datetime,
     critical_seconds: int | None = None,
     warn_seconds: int | None = None,
+    dedup_ttl_seconds: int | None = None,
 ) -> None:
     """投递成功后写入去重键与冷却键。
 
@@ -81,9 +82,13 @@ async def mark_delivered(
 
     冷却键只在**首投**（``revision == 0``）时写入：
     升级投递不占用冷却窗口（PRD 22.4.4.1 第 3 条）。
+
+    ``dedup_ttl_seconds`` 为 0 时表示关闭去重：不写去重键（Redis 不接受 ``EX 0``）。
     """
     pipe = client.pipeline()
-    pipe.set(dedup_key(fingerprint, revision), "1", ex=int(DEDUP_TTL.total_seconds()))
+    ttl = DEDUP_TTL if dedup_ttl_seconds is None else dt.timedelta(seconds=dedup_ttl_seconds)
+    if ttl.total_seconds() > 0:
+        pipe.set(dedup_key(fingerprint, revision), "1", ex=int(ttl.total_seconds()))
     if revision == 0:
         pipe.set(
             _cooldown_redis_key(cooldown_key),
