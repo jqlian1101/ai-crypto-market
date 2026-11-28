@@ -302,11 +302,6 @@ DEFAULT_WHITELIST: tuple[WhitelistEntry, ...] = (
         planned_for="P5",
     ),
     WhitelistEntry(
-        "ANOMALY_SCAN_INTERVAL_SECONDS",
-        reason="异动扫描定时化未实现（当前靠 scripts/run_anomaly_scan.py 手动执行）",
-        planned_for="P5",
-    ),
-    WhitelistEntry(
         "ANOMALY_EVAL_HORIZONS",
         reason="异动评估时长的判定口径未实现（PRD 22.6 / P7 评估）",
         planned_for="P7",

@@ -11,6 +11,57 @@ from apscheduler.schedulers.base import SchedulerAlreadyRunningError
 from aicrypto.services.scheduler_daemon import APSchedulerDaemon
 
 
+class TestAnomalyScanRegistration:
+    """异动扫描定时化（PRD 23.1.2）：注册、间隔来源、锁跳过。"""
+
+    def _daemon(self, interval: int = 60):
+        settings = MagicMock()
+        settings.ANOMALY_SCAN_INTERVAL_SECONDS = interval
+        return APSchedulerDaemon(settings=settings)
+
+    def test_registers_anomaly_scan_with_configured_interval(self):
+        daemon = self._daemon(interval=90)
+        daemon.register_anomaly_scan()
+        job = daemon.scheduler.get_job("anomaly_scan")
+        assert job is not None
+        # 间隔必须来自配置，而非硬编码
+        assert job.trigger.interval.total_seconds() == 90
+
+    def test_anomaly_job_is_independent_of_analysis_jobs(self):
+        daemon = self._daemon()
+        daemon.register_anomaly_scan()
+        # 异动任务不得进入分析调度的 tick 函数
+        job = daemon.scheduler.get_job("anomaly_scan")
+        assert job.func.__name__ == "_execute_anomaly_scan"
+
+    def test_skipped_locked_is_not_an_error(self, caplog):
+        from aicrypto.services import scheduler_daemon as mod
+
+        skipped = MagicMock(status="SKIPPED_LOCKED", duration_ms=0.0)
+        with (
+            patch(
+                "aicrypto.services.anomaly_runner.run_anomaly_scan_once",
+                return_value=skipped,
+            ),
+            caplog.at_level("ERROR"),
+        ):
+            mod._execute_anomaly_scan()
+        assert not [r for r in caplog.records if r.levelname == "ERROR"]
+
+    def test_exception_is_logged_not_raised(self, caplog):
+        from aicrypto.services import scheduler_daemon as mod
+
+        with (
+            patch(
+                "aicrypto.services.anomaly_runner.run_anomaly_scan_once",
+                side_effect=RuntimeError("redis down"),
+            ),
+            caplog.at_level("ERROR"),
+        ):
+            mod._execute_anomaly_scan()  # 不得抛出
+        assert any("异动扫描失败" in r.message for r in caplog.records)
+
+
 class TestAPSchedulerDaemon:
     """APScheduler 守护进程的初始化与任务注册。"""
 

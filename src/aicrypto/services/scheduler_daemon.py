@@ -34,7 +34,7 @@ from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
 
 from aicrypto.common.clock import now
-from aicrypto.config.settings import get_settings
+from aicrypto.config.settings import Settings, get_settings
 from aicrypto.infrastructure.database.session import session_scope
 
 logger = logging.getLogger(__name__)
@@ -215,6 +215,25 @@ class APSchedulerDaemon:
             )
             logger.info(f"已注册默认 CRON 任务: {job_def.job_id}")
 
+    def register_anomaly_scan(self):
+        """注册异动扫描间隔任务（PRD 23.1.2，频率见 ANOMALY_SCAN_INTERVAL_SECONDS）。
+
+        与分析调度解耦：异动不占用分析窗口，也不经过 run_scheduler。
+        """
+        from apscheduler.triggers.interval import IntervalTrigger
+
+        cfg: Settings = self.settings
+        interval = int(cfg.ANOMALY_SCAN_INTERVAL_SECONDS)
+        self.scheduler.add_job(
+            _execute_anomaly_scan,
+            trigger=IntervalTrigger(seconds=interval),
+            id="anomaly_scan",
+            name="[INTERVAL] anomaly_scan",
+            args=("anomaly_scan",),
+            replace_existing=True,
+        )
+        logger.info(f"已注册异动扫描任务: interval={interval}s")
+
     def start(self):
         """启动调度器，进入前台运行（阻塞）。"""
         if not self.scheduler:
@@ -259,6 +278,29 @@ def _run_tick() -> int:
     return module.main()
 
 
+def _execute_anomaly_scan(job_id: str = "anomaly_scan"):
+    """异动扫描单次执行——由 APScheduler 按 ANOMALY_SCAN_INTERVAL_SECONDS 触发。
+
+    - 独立于分析调度：异动不走 run_scheduler / 分析窗口；
+    - 锁与去重由 ``run_anomaly_scan_once`` 自身负责（Redis ``lock:anomaly_scan``），
+      此处不再叠加 DistributedLock，避免两把锁语义不一致；
+    - 返回 SKIPPED_LOCKED 视为正常（上一轮尚未结束），不记错误；
+    - 异常被记录但不抛出，保证下一次触发仍会执行。
+    """
+    from aicrypto.services.anomaly_runner import run_anomaly_scan_once
+
+    try:
+        result = run_anomaly_scan_once()
+        if result.status == "SKIPPED_LOCKED":
+            logger.info(f"异动扫描上一轮未结束，本轮跳过: job_id={job_id}")
+        else:
+            logger.debug(
+                f"异动扫描完成: job_id={job_id} duration_ms={result.duration_ms:.0f}"
+            )
+    except Exception as exc:
+        logger.error(f"异动扫描失败: job_id={job_id} error={exc}", exc_info=True)
+
+
 def _execute_scheduler_tick(job_id: str):
     """单次调度 tick 的执行函数——由 APScheduler 触发。
 
@@ -301,6 +343,7 @@ def main() -> int:
     try:
         daemon = APSchedulerDaemon(settings)
         daemon.load_and_register_jobs()
+        daemon.register_anomaly_scan()
         daemon.start()
         return 0
     except Exception as exc:
