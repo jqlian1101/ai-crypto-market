@@ -27,6 +27,10 @@ class AnalysisRunRecord(Base):
     job_run_id: Mapped[str | None] = mapped_column(
         Text, ForeignKey("job_runs.job_run_id", name="fk_analysis_runs_job_run")
     )
+    # 触发本次分析的异动事件（PRD 22.6）；非异动触发为 NULL
+    anomaly_event_id: Mapped[str | None] = mapped_column(
+        Text, ForeignKey("anomaly_events.anomaly_event_id", name="fk_analysis_runs_anomaly_event")
+    )
     status: Mapped[str] = mapped_column(Text, nullable=False, server_default="QUEUED")
     analysis_mode: Mapped[str] = mapped_column(Text, nullable=False, server_default="LIVE")
     market_snapshot_id: Mapped[str | None] = mapped_column(Text)

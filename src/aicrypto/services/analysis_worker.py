@@ -67,6 +67,7 @@ from aicrypto.infrastructure.database.models.report import AnalysisRunRecord
 from aicrypto.infrastructure.database.session import session_scope
 from aicrypto.infrastructure.logging import configure_logging, get_logger
 from aicrypto.services.analysis import create_report
+from aicrypto.services.anomaly_revision import create_ai_revision
 from aicrypto.services.derivatives_snapshot import build_derivatives_snapshot
 from aicrypto.services.llm_cost import PricingEntry, estimate_cost, resolve_pricing
 from aicrypto.services.llm_retry import (
@@ -1272,6 +1273,12 @@ def process_one(settings: Settings) -> bool:
                 },
                 degraded_reason=call_info.get("degraded_reason"),
             )
+            create_ai_revision(
+                db,
+                run_id=run_id,
+                run_status=AnalysisRunStatus.PARTIAL.value,
+                degraded_reason=call_info.get("degraded_reason"),
+            )
     except Exception as exc:
         # 每项任务单独落终态；不记录模型密钥、请求头或原始响应。
         code = exc.code if isinstance(exc, AICryptoError) else ErrorCode.LLM_SCHEMA_INVALID
@@ -1565,6 +1572,12 @@ def process_one_multi(settings: Settings) -> bool:
                 # **永远是空的**（``call_info`` 是单 Agent 路径 ``generate_report``
                 # 的产物），于是降级被**静默吞掉**：
                 # 读者以为拿到的是原档位的结论。
+                degraded_reason=outcome.degraded_reason,
+            )
+            create_ai_revision(
+                db,
+                run_id=run_id,
+                run_status=AnalysisRunStatus.PARTIAL.value,
                 degraded_reason=outcome.degraded_reason,
             )
     except Exception as exc:

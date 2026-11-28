@@ -24,11 +24,13 @@ from sqlalchemy.orm import Session
 from aicrypto.common.clock import now
 from aicrypto.config.settings import Settings
 from aicrypto.domain.anomaly.dedup import dedup_key
+from aicrypto.domain.anomaly.revision import RevisionBody, decide_ai_revision
 from aicrypto.infrastructure.database.models.anomaly import AnomalyEvent
 from aicrypto.infrastructure.database.models.notification import (
     NotificationDeadLetter,
     NotificationEvent,
 )
+from aicrypto.infrastructure.database.models.report import AnalysisReportRecord, AnalysisRunRecord
 from aicrypto.infrastructure.notifications import feishu
 from aicrypto.infrastructure.notifications.render import render_anomaly_card, render_test_card
 
@@ -55,6 +57,30 @@ def _digest(payload: dict[str, Any]) -> str:
     return hashlib.sha256(raw).hexdigest()
 
 
+def _load_interpretation(
+    db: Session, event: AnomalyEvent
+) -> tuple[RevisionBody, dict[str, Any] | None]:
+    """为升级行（revision>0）加载 AI 解读；首投不查询。
+
+    ``llm_interpretation_id`` 存的是分析 ``run_id``：经 ``analysis_runs`` 取 ``analysis_id``，
+    再读 ``analysis_reports``。找不到报告时按 BRIEF 处理，不伪造内容（PRD 32.4）。
+    """
+    if event.revision == 0 or not event.llm_interpretation_id:
+        return RevisionBody.NONE, None
+
+    run = db.get(AnalysisRunRecord, event.llm_interpretation_id)
+    if run is None:
+        return RevisionBody.BRIEF, {"degraded_reason": "解读记录缺失"}
+    report = db.get(AnalysisReportRecord, run.analysis_id)
+    if report is None:
+        return RevisionBody.BRIEF, {"degraded_reason": "报告未发布"}
+
+    decision = decide_ai_revision(run_status=report.status, degraded_reason=report.degraded_reason)
+    if decision.body is RevisionBody.FULL:
+        return RevisionBody.FULL, dict(report.content)
+    return RevisionBody.BRIEF, {"degraded_reason": report.degraded_reason or "分析未完成"}
+
+
 async def deliver_anomaly(
     db: Session,
     redis: Redis,
@@ -68,7 +94,8 @@ async def deliver_anomaly(
     if await redis.exists(key):
         return _record_skipped(db, event, reason="dedup_hit")
 
-    payload = render_anomaly_card(event)
+    body, interpretation = _load_interpretation(db, event)
+    payload = render_anomaly_card(event, body=body, interpretation=interpretation)
     return await _send_with_retry(
         db,
         redis,

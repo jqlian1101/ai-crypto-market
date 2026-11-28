@@ -24,6 +24,7 @@ from aicrypto.config.settings import LockMode, Settings, get_settings
 from aicrypto.infrastructure import metrics
 from aicrypto.infrastructure.anomaly_state import load_last_fired
 from aicrypto.infrastructure.database.session import session_scope
+from aicrypto.services.anomaly_analysis import enqueue_critical_analyses
 from aicrypto.services.anomaly_scan import (
     SEED_RULE_IDS,
     ScanOutcome,
@@ -112,6 +113,10 @@ async def _run_with_client(symbols: list[str], settings: Settings, redis: Redis)
                     derivatives_thresholds=derivatives_thresholds,
                     cooldown_critical_seconds=settings.NOTIFY_COOLDOWN_CRITICAL_SECONDS,
                     cooldown_warn_seconds=settings.NOTIFY_COOLDOWN_WARN_SECONDS,
+                )
+                # PRD 22.6：CRITICAL 新事件与其完整分析入队同事务提交。
+                enqueue_critical_analyses(
+                    db, symbol=symbol, events=outcome.new_events, now=cutoff
                 )
             # 扫描侧只落库，不写去重/冷却 Redis 状态。
             # 去重与冷却必须在「投递成功」后写入（PRD 22.4.4.1），否则投递失败会吞掉告警。

@@ -385,7 +385,11 @@
   - [x] 日报走 DEEP 档：`analysis_daily` 入队 `trigger=RETROSPECTIVE`，
         `tier_for_trigger` 解析为 DEEP（PRD 24.3）。其余定时任务保持 `SCHEDULED`/STANDARD。
         见 `services/scheduler_enqueue.py`，单测 `TestTriggerForJob`（含注入缺陷反向验证）。
-- [ ] 异动触发完整分析流程（PRD 22.6）
+- [~] 异动触发完整分析流程（PRD 22.6）
+  - [x] CRITICAL 新事件与分析入队同事务（`services/anomaly_analysis.py`，幂等键 `anomaly:{event_id}`，`trigger=ANOMALY`）；单测 `tests/unit/test_anomaly_analysis.py`
+  - [x] `analysis_runs.anomaly_event_id` 外键（迁移 `0010_analysis_runs_anomaly_link`），入队时直接写入；集成测试 `tests/integration/test_anomaly_analysis_link.py`
+  - [x] 分析完成后推送「异动快报 + AI 解读」增强卡片（revision 1）：代码、单测与真库集成测试均已完成，见 P6 去重与升级投递条目
+  - [ ] 登记 Signal / Prediction 后追加信号摘要（revision 2）
 - [x] 异动扫描定时化（PRD 23.1.2）
   - 守护进程注册 `anomaly_scan` 间隔任务，间隔读 `ANOMALY_SCAN_INTERVAL_SECONDS`（默认 60s）。
   - 与分析调度解耦；锁与去重由 `run_anomaly_scan_once` 的 Redis 锁负责；`SKIPPED_LOCKED` 视为正常。
@@ -405,8 +409,14 @@
 - [x] 将 Redis 去重、冷却接入真实运行链路（`anomaly_runner` 读取冷却键，投递成功后经 `notification_dispatch` 写入；`NOTIFY_DEDUP_TTL_SECONDS` / `NOTIFY_COOLDOWN_*` 已接线）
 - [ ] Redis 配额计数接入真实链路（`NOTIFY_DAILY_QUOTA` 仍未消费）
 - [ ] 三级配额模型：账户级、规则级、渠道级（PRD 22.4.4.2）
-- [ ] 去重键 `(fingerprint, revision)` 与 AI 解读升级投递（PRD 22.4.4.1）
-- [ ] 合并等待窗口 30s
+- [~] 去重键 `(fingerprint, revision)` 与 AI 解读升级投递（PRD 22.4.4.1）
+  - [x] revision 1 生成与幂等（单测 `tests/unit/test_anomaly_revision.py`，集成 `tests/integration/test_anomaly_revision_link.py`）
+  - [x] 升级卡片渲染：标题区分，附摘要 / 偏向 / 情景概率（标注主观估计）/ 依据 / 失效条件；降级仅显示原因（`infrastructure/notifications/render.py`，单测 `tests/unit/test_anomaly_card_render.py`）
+  - [x] 投递层加载报告并判定正文类型（`infrastructure/notifications/service.py::_load_interpretation`）
+  - [x] `_load_interpretation` 集成测试（FULL / 降级 BRIEF / run 缺失 / 报告未发布 / 首投 NONE）：`tests/integration/test_anomaly_interpretation_load.py`，真库 5 项通过
+- [~] 合并策略（PRD 22.4.4.1 规则 3-5，已与负责人确认）
+  - [x] 首投立即推送，满足 5 秒 SLO；AI 解读作为独立 revision 1 推送，标题不同
+  - [ ] 同规则 WARN 的 30 秒窗口聚合合并（PRD 2136 行）：语义与 `AGGREGATE`（PRD 2076 行，"永不单独推送"）冲突，待 PRD 澄清，见 `遗留问题.md` L-39
 - [ ] 免打扰（按用户时区）
 - [ ] 通知模板（`notification_templates`）与 `notification_channel_state`
 - [ ] 死信重试由调度中心驱动
