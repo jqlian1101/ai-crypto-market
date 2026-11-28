@@ -80,28 +80,33 @@ def reconcile_running_jobs(db: Session, *, now: dt.datetime) -> dict[str, Any]:
     timeout_count = 0
 
     for job_run in running_jobs:
-        # 获取任务定义以取得 timeout_seconds
-        job_def = db.scalar(select(ScheduledJob).where(ScheduledJob.job_id == job_run.job_id))
-        if job_def is None:
-            # 任务定义丢失（极端情况），标记为错误
-            job_run.status = "FAILED"
-            job_run.finished_at = now
-            job_run.error = {"code": "SCHEDULER_JOB_DEF_MISSING"}
-            timeout_count += 1
+        # 超时责任归属 analysis_run 层（claim_run 已对 RUNNING 超预算的置 TIMEOUT）。
+        # job_run 不得按自身 started_at 计时：入队后可能长时间排队，
+        # 那段时间不代表执行超时，否则会误标 TIMEOUT 且无法再回写。
+        # 仅当窗口完全没有下属 analysis_run（入队中途失败的残留）且超过
+        # 任务超时，才判为 TIMEOUT。
+        has_children = (
+            db.scalar(
+                select(AnalysisRunRecord.run_id)
+                .where(AnalysisRunRecord.job_run_id == job_run.job_run_id)
+                .limit(1)
+            )
+            is not None
+        )
+        if not has_children:
+            job_def = db.scalar(select(ScheduledJob).where(ScheduledJob.job_id == job_run.job_id))
+            timeout_seconds = job_def.timeout_seconds if job_def is not None else 600
+            if is_timed_out(job_run.started_at, timeout_seconds, now=now):
+                job_run.status = "TIMEOUT"
+                job_run.finished_at = now
+                job_run.error = {"code": "SCHEDULER_NO_ANALYSIS_RUNS"}
+                timeout_count += 1
             continue
 
-        timeout_seconds = job_def.timeout_seconds
-
-        if is_timed_out(job_run.started_at, timeout_seconds, now=now):
-            job_run.status = "TIMEOUT"
-            job_run.finished_at = now
-            job_run.error = {"code": "SCHEDULER_TIMEOUT", "timeout_seconds": timeout_seconds}
-            timeout_count += 1
-        else:
-            # 对账：看是否所有下属分析都完成了
-            reconcile_job_run(db, job_run, now=now)
-            if job_run.finished_at is not None:
-                reconciled_count += 1
+        # 有下属分析：只做聚合，终态由 analysis_run 的实际结果决定
+        reconcile_job_run(db, job_run, now=now)
+        if job_run.finished_at is not None:
+            reconciled_count += 1
 
     return {
         "reconciled_count": reconciled_count,
