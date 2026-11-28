@@ -214,9 +214,15 @@ def main() -> int:
 
             missed_count += len(missed_windows)
             if missed_windows:
-                print(
-                    f"scheduler_missed: job_id={job.job_id} windows={missed_windows}",
-                    flush=True,
+                # 落库 MISSED 窗口
+                from aicrypto.services.scheduler_reconcile_db import record_missed_windows
+                
+                missed_recorded = record_missed_windows(db, job.job_id, missed_windows, moment)
+                logger.warning(
+                    "scheduler_missed_windows",
+                    job_id=job.job_id,
+                    count=missed_recorded,
+                    total=len(missed_windows),
                 )
 
         # 对账回写：扫描 RUNNING 的 job_runs，更新为终态或检测超时

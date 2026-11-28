@@ -223,6 +223,18 @@ class Settings(BaseSettings):
     SCHEDULER_MAX_BACKFILL_SECONDS: int = Field(default=86400, ge=0)
     SCHEDULER_LOCK_MODE: LockMode = Field(default=LockMode.POSTGRES_ADVISORY)
     SCHEDULER_WORKER_POOL: int = Field(default=4, ge=1)
+    SCHEDULER_MAX_RETRIES: int = Field(
+        default=2,
+        ge=0,
+        le=10,
+        description="调度任务失败时的最大重试次数（PRD 23.1.3）",
+    )
+    SCHEDULER_RETRY_BASE_DELAY_SECONDS: int = Field(
+        default=30,
+        ge=10,
+        le=600,
+        description="重试的基础延迟（指数退避：base × 2^(attempt-1)）",
+    )
 
     # ---------------- Freqtrade (P1) ----------------
     FREQTRADE_ENABLED: bool = Field(default=False)
