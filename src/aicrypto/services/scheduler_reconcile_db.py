@@ -94,9 +94,11 @@ def reconcile_job_run(db: Session, job_run: JobRun, *, now: dt.datetime) -> None
             new_job_run = JobRun(
                 job_run_id=new_job_run_id(),
                 job_id=job_run.job_id,
+                idempotency_key=f"{job_run.job_id}:retry:{attempt + 1}:{retry_at.isoformat()}",
                 scheduled_at=retry_at,
+                started_at=now,
                 attempt=attempt + 1,
-                status="QUEUED",
+                status="RUNNING",
                 is_backfill=False,
             )
             db.add(new_job_run)

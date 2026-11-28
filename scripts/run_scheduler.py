@@ -218,11 +218,10 @@ def main() -> int:
                 from aicrypto.services.scheduler_reconcile_db import record_missed_windows
                 
                 missed_recorded = record_missed_windows(db, job.job_id, missed_windows, moment)
-                logger.warning(
-                    "scheduler_missed_windows",
-                    job_id=job.job_id,
-                    count=missed_recorded,
-                    total=len(missed_windows),
+                print(
+                    f"scheduler_missed: job_id={job.job_id} "
+                    f"recorded={missed_recorded} total={len(missed_windows)}",
+                    flush=True,
                 )
 
         # 对账回写：扫描 RUNNING 的 job_runs，更新为终态或检测超时

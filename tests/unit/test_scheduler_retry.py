@@ -10,7 +10,7 @@
 from __future__ import annotations
 
 import datetime as dt
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, patch, call
 
 import pytest
 
@@ -107,16 +107,67 @@ class TestRetryDelay:
         assert retry_at == failed_at + dt.timedelta(seconds=30)
 
 
-class TestRetryJobRunCreation:
-    """重试窗口创建的单元测试。"""
+class TestReconcileJobRunWithRetry:
+    """reconcile_job_run 重试逻辑的集成测试。"""
+
+    def test_reconcile_failed_job_with_retry_creates_new_window(self):
+        """FAILED 且可重试时应创建重试窗口。"""
+        from aicrypto.services.scheduler_reconcile_db import reconcile_job_run
+
+        # Mock 数据库和相关对象
+        db = MagicMock()
+        
+        # 创建原 job_run
+        original_failed_at = dt.datetime(2026, 11, 28, 10, 0, 0, tzinfo=dt.UTC)
+        original_job_run = JobRun(
+            job_run_id="run-1",
+            job_id="job-daily",
+            idempotency_key="job-daily:2026-11-28T10:00:00",
+            scheduled_at=original_failed_at,
+            started_at=original_failed_at,
+            attempt=1,
+            status="RUNNING",
+        )
+        
+        # Mock analysis_runs
+        analysis_run_1 = MagicMock()
+        analysis_run_1.run_id = "arun-1"
+        analysis_run_1.symbol = "BTC"
+        analysis_run_1.market_type = "spot"
+        analysis_run_1.status = "FAILED"
+        
+        analysis_run_2 = MagicMock()
+        analysis_run_2.run_id = "arun-2"
+        analysis_run_2.symbol = "ETH"
+        analysis_run_2.market_type = "futures"
+        analysis_run_2.status = "FAILED"
+        
+        # Mock scalars 链
+        db.scalars.return_value.all.return_value = [analysis_run_1, analysis_run_2]
+        
+        # Mock Settings （全局导入路径）
+        with patch("aicrypto.config.settings.get_settings") as mock_get_settings:
+            mock_settings = MagicMock()
+            mock_settings.SCHEDULER_MAX_RETRIES = 2
+            mock_settings.SCHEDULER_RETRY_BASE_DELAY_SECONDS = 30
+            mock_get_settings.return_value = mock_settings
+            
+            with patch("aicrypto.services.scheduler_enqueue.enqueue_analysis"):
+                now = dt.datetime(2026, 11, 28, 10, 5, 0, tzinfo=dt.UTC)
+                
+                # 执行
+                reconcile_job_run(db, original_job_run, now=now)
+                
+                # 验证：应该调用 db.add() 和 db.flush()
+                assert db.add.called, "应该添加新的重试 job_run"
+                assert db.flush.called, "应该 flush 操作"
+
+
+class TestRetryJobRunAttributes:
+    """重试 job_run 属性的单元测试。"""
 
     def test_retry_job_run_created_with_correct_attempt(self):
         """重试窗口的 attempt 应递增。"""
-        # 这个测试需要 mock ORM 和数据库操作
-        # 由于复杂性，这里展示测试架构；实际集成测试会更全面
-
-        from aicrypto.infrastructure.database.models.scheduler import JobRun
-
         original = JobRun(
             job_run_id="run-1",
             job_id="job-daily",
@@ -134,39 +185,34 @@ class TestRetryJobRunCreation:
         from aicrypto.services.scheduler_reconcile import next_retry_at
 
         failed_at = dt.datetime(2026, 11, 28, 10, 0, 0, tzinfo=dt.UTC)
-        now = dt.datetime(2026, 11, 28, 10, 5, 0, tzinfo=dt.UTC)
         base = dt.timedelta(seconds=30)
 
         retry_at = next_retry_at(failed_at, attempt=1, base=base)
 
         # 重试时间应在 failed_at 之后
         assert retry_at > failed_at
-        # 在这个测试中，retry_at 可能早于 now（取决于失败到现在的间隔）
-        # 但在实际场景中，重试延迟确实会将其推向未来
 
-    def test_retry_job_run_has_queued_status(self):
-        """重试窗口初始状态应为 QUEUED。"""
-        from aicrypto.infrastructure.database.models.scheduler import JobRun
-
+    def test_retry_job_run_has_running_status(self):
+        """重试窗口初始状态应为 RUNNING（以便入队分析）。"""
         retry_run = JobRun(
             job_run_id="run-2",
             job_id="job-daily",
+            idempotency_key="job-daily:retry:2:2026-11-28T10:00:30",
             scheduled_at=dt.datetime(2026, 11, 28, 10, 0, 30, tzinfo=dt.UTC),
+            started_at=dt.datetime(2026, 11, 28, 10, 0, 30, tzinfo=dt.UTC),
             attempt=2,
-            status="QUEUED",
+            status="RUNNING",
         )
 
-        assert retry_run.status == "QUEUED"
+        assert retry_run.status == "RUNNING"
+        assert retry_run.attempt == 2
 
 
 class TestRetryAnalysisReEnqueue:
     """重试窗口的分析任务重新入队。"""
 
-    def test_retry_analysis_runs_re_enqueued(self):
-        """失败的分析任务应在重试窗口重新入队。"""
-        # 这个测试验证 reconcile_job_run 中的重试逻辑
-        # 实现细节：确保从原 job_run 的 analysis_runs 中提取标的和市场类型
-
+    def test_retry_extracts_symbols_and_markets(self):
+        """重试应从失败的 analysis_runs 中提取标的和市场类型。"""
         # 验证数据提取逻辑
         analysis_runs = [
             MagicMock(symbol="BTC", market_type="spot", status="FAILED"),
@@ -181,7 +227,7 @@ class TestRetryAnalysisReEnqueue:
         assert market_types == {"spot", "futures"}
 
     def test_retry_respects_idempotency(self):
-        """重试入队应使用相同的幂等键规则。"""
+        """重试入队应使用幂等键防止重复。"""
         from aicrypto.services.scheduler_core import make_run_idempotency_key
 
         job_id = "job-daily"
@@ -189,8 +235,12 @@ class TestRetryAnalysisReEnqueue:
         symbol = "BTC"
         market_type = "spot"
 
-        idem_key_1 = make_run_idempotency_key(job_id, scheduled_at, symbol=symbol, market_type=market_type)
-        idem_key_2 = make_run_idempotency_key(job_id, scheduled_at, symbol=symbol, market_type=market_type)
+        idem_key_1 = make_run_idempotency_key(
+            job_id, scheduled_at, symbol=symbol, market_type=market_type
+        )
+        idem_key_2 = make_run_idempotency_key(
+            job_id, scheduled_at, symbol=symbol, market_type=market_type
+        )
 
         # 相同参数应生成相同的幂等键
         assert idem_key_1 == idem_key_2
@@ -201,19 +251,17 @@ class TestOriginalJobRunMarkedFailed:
 
     def test_original_job_run_keeps_failed_status(self):
         """即使创建了重试，原 job_run 仍标记为 FAILED。"""
-        from aicrypto.infrastructure.database.models.scheduler import JobRun
-
         original = JobRun(
             job_run_id="run-1",
             job_id="job-daily",
+            idempotency_key="job-daily:2026-11-28T10:00:00",
             scheduled_at=dt.datetime(2026, 11, 28, 10, 0, 0, tzinfo=dt.UTC),
+            started_at=dt.datetime(2026, 11, 28, 10, 0, 0, tzinfo=dt.UTC),
             attempt=1,
             status="FAILED",
         )
 
-        # 验证原 run 状态
-        assert original.status == "FAILED"
-        # 状态不应改变
+        # 验证原 run 状态不变
         assert original.status == "FAILED"
 
     def test_retry_and_original_separate_records(self):
@@ -223,3 +271,4 @@ class TestOriginalJobRunMarkedFailed:
 
         # 两个 ID 应不同
         assert original_id != retry_id
+

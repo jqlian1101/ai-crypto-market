@@ -22,21 +22,36 @@ class TestMissedWindowsRecording:
 
     def test_missed_windows_recorded_to_job_runs(self):
         """MISSED 窗口应被记录到 job_runs 表。"""
-        # 验证函数签名和返回值类型
         from aicrypto.services.scheduler_reconcile_db import record_missed_windows
 
-        # 此测试验证函数存在且可调用
-        # 实际数据库操作在集成测试中验证
-        assert callable(record_missed_windows)
+        db = MagicMock()
+        
+        # Mock scalars 检查不存在
+        db.scalar.return_value = None
+        
+        job_id = "job-daily"
+        missed_windows = [
+            dt.datetime(2026, 11, 28, 10, 0, 0, tzinfo=dt.UTC),
+            dt.datetime(2026, 11, 28, 11, 0, 0, tzinfo=dt.UTC),
+        ]
+        now = dt.datetime(2026, 11, 28, 12, 0, 0, tzinfo=dt.UTC)
+        
+        # 执行
+        result = record_missed_windows(db, job_id, missed_windows, now)
+        
+        # 验证：应该插入 2 条记录
+        assert result == 2
+        assert db.add.call_count == 2
+        assert db.flush.called
 
     def test_missed_status_set_correctly(self):
         """MISSED job_run 的 status 应为 'MISSED'。"""
-        from aicrypto.infrastructure.database.models.scheduler import JobRun
-
         missed_run = JobRun(
             job_run_id="missed-1",
             job_id="job-daily",
+            idempotency_key="job-daily:2026-11-28T10:00:00",
             scheduled_at=dt.datetime(2026, 11, 28, 10, 0, 0, tzinfo=dt.UTC),
+            started_at=dt.datetime(2026, 11, 28, 12, 0, 0, tzinfo=dt.UTC),
             status="MISSED",
         )
 
@@ -60,41 +75,69 @@ class TestMissedWindowsRecording:
         idem_key_3 = make_idempotency_key(job_id, different_scheduled_at)
         assert idem_key_1 != idem_key_3
 
+    def test_duplicate_missed_skipped(self):
+        """重复的 MISSED 窗口应被跳过。"""
+        from aicrypto.services.scheduler_reconcile_db import record_missed_windows
+
+        db = MagicMock()
+        
+        # Mock scalars：第一次返回 None（不存在），第二次返回一条已存在的记录
+        existing_run = MagicMock()
+        db.scalar.side_effect = [None, existing_run]
+        
+        job_id = "job-daily"
+        missed_windows = [
+            dt.datetime(2026, 11, 28, 10, 0, 0, tzinfo=dt.UTC),
+            dt.datetime(2026, 11, 28, 10, 0, 0, tzinfo=dt.UTC),  # 重复
+        ]
+        now = dt.datetime(2026, 11, 28, 12, 0, 0, tzinfo=dt.UTC)
+        
+        # 执行
+        result = record_missed_windows(db, job_id, missed_windows, now)
+        
+        # 验证：应该只插入 1 条（第二条被跳过）
+        assert result == 1
+        assert db.add.call_count == 1
+
 
 class TestMissedWindowsDataIntegrity:
     """MISSED 窗口数据完整性的测试。"""
 
     def test_missed_job_run_has_correct_scheduled_at(self):
         """MISSED job_run 的 scheduled_at 应为规划时间。"""
-        from aicrypto.infrastructure.database.models.scheduler import JobRun
-
         scheduled_at = dt.datetime(2026, 11, 28, 10, 30, 0, tzinfo=dt.UTC)
         missed_run = JobRun(
             job_run_id="missed-1",
             job_id="job-daily",
+            idempotency_key="job-daily:2026-11-28T10:30:00",
             scheduled_at=scheduled_at,
+            started_at=dt.datetime(2026, 11, 28, 12, 0, 0, tzinfo=dt.UTC),
             status="MISSED",
         )
 
         assert missed_run.scheduled_at == scheduled_at
 
-    def test_missed_job_run_has_no_analysis_runs(self):
-        """MISSED job_run 不应入队任何分析任务。"""
-        # 这是设计规则，不涉及 ORM
-        # MISSED 仅作为历史记录，不触发分析
+    def test_missed_job_run_has_correct_job_id(self):
+        """MISSED job_run 应记录源 job_id。"""
+        job_id = "job-daily"
+        missed_run = JobRun(
+            job_run_id="missed-1",
+            job_id=job_id,
+            idempotency_key="job-daily:2026-11-28T10:00:00",
+            scheduled_at=dt.datetime(2026, 11, 28, 10, 0, 0, tzinfo=dt.UTC),
+            started_at=dt.datetime(2026, 11, 28, 12, 0, 0, tzinfo=dt.UTC),
+            status="MISSED",
+        )
 
-        # 验证 record_missed_windows 不调用 enqueue_analysis
-        # 这在集成测试中验证
-        pass
+        assert missed_run.job_id == job_id
 
     def test_missed_job_run_records_attempted_time(self):
         """MISSED job_run 应记录被标记为 MISSED 的时间。"""
-        from aicrypto.infrastructure.database.models.scheduler import JobRun
-
         now = dt.datetime(2026, 11, 28, 10, 35, 0, tzinfo=dt.UTC)
         missed_run = JobRun(
             job_run_id="missed-1",
             job_id="job-daily",
+            idempotency_key="job-daily:2026-11-28T10:30:00",
             scheduled_at=dt.datetime(2026, 11, 28, 10, 30, 0, tzinfo=dt.UTC),
             started_at=now,
             status="MISSED",
@@ -105,15 +148,6 @@ class TestMissedWindowsDataIntegrity:
 
 class TestMissedWindowsCounting:
     """MISSED 窗口计数的测试。"""
-
-    def test_record_missed_returns_count(self):
-        """record_missed_windows 应返回成功插入的行数。"""
-        # 函数应返回 int
-        from aicrypto.services.scheduler_reconcile_db import record_missed_windows
-
-        # 验证返回值类型（实际数据库操作在集成测试中）
-        # 这里验证函数设计正确
-        pass
 
     def test_multiple_missed_windows_all_recorded(self):
         """多个 MISSED 窗口应全部入库。"""
@@ -129,83 +163,63 @@ class TestMissedWindowsCounting:
 
     def test_empty_missed_windows_list(self):
         """空的 MISSED 列表应不产生任何插入。"""
-        windows = []
+        from aicrypto.services.scheduler_reconcile_db import record_missed_windows
 
-        # 验证空列表处理
-        assert len(windows) == 0
-
-
-class TestMissedWindowsJobIdTracking:
-    """MISSED 窗口的任务 ID 追踪。"""
-
-    def test_missed_job_run_tracks_job_id(self):
-        """MISSED job_run 应记录源 job_id。"""
-        from aicrypto.infrastructure.database.models.scheduler import JobRun
-
+        db = MagicMock()
+        
         job_id = "job-daily"
-        missed_run = JobRun(
-            job_run_id="missed-1",
-            job_id=job_id,
-            scheduled_at=dt.datetime(2026, 11, 28, 10, 0, 0, tzinfo=dt.UTC),
-            status="MISSED",
-        )
-
-        assert missed_run.job_id == job_id
-
-    def test_missed_windows_per_job_aggregation(self):
-        """日报应能按 job_id 聚合 MISSED 统计。"""
-        # 验证 job_runs 表的查询结构可支持日报聚合
-        # SELECT job_id, COUNT(*) FROM job_runs WHERE status='MISSED' AND scheduled_at >= ? GROUP BY job_id;
-
-        job_runs = [
-            MagicMock(job_id="job-daily", status="MISSED"),
-            MagicMock(job_id="job-daily", status="MISSED"),
-            MagicMock(job_id="job-1h", status="MISSED"),
-        ]
-
-        # 模拟日报聚合
-        missed_by_job = {}
-        for run in job_runs:
-            if run.status == "MISSED":
-                missed_by_job[run.job_id] = missed_by_job.get(run.job_id, 0) + 1
-
-        assert missed_by_job["job-daily"] == 2
-        assert missed_by_job["job-1h"] == 1
+        missed_windows = []
+        now = dt.datetime(2026, 11, 28, 12, 0, 0, tzinfo=dt.UTC)
+        
+        # 执行
+        result = record_missed_windows(db, job_id, missed_windows, now)
+        
+        # 验证：应该不调用 add 或 flush
+        assert result == 0
+        assert db.add.call_count == 0
+        assert not db.flush.called
 
 
 class TestMissedVsEnqueuedSeparation:
     """MISSED 和 ENQUEUED 窗口的区分。"""
 
     def test_missed_and_enqueued_windows_separate(self):
-        """MISSED 窗口不应混入 ENQUEUED 窗口。"""
-        from aicrypto.infrastructure.database.models.scheduler import JobRun
-
+        """MISSED 窗口不应混入 RUNNING 或其他终态。"""
         missed = JobRun(
             job_run_id="missed-1",
             job_id="job-daily",
+            idempotency_key="job-daily:2026-11-28T10:00:00",
             scheduled_at=dt.datetime(2026, 11, 28, 10, 0, 0, tzinfo=dt.UTC),
+            started_at=dt.datetime(2026, 11, 28, 12, 0, 0, tzinfo=dt.UTC),
             status="MISSED",
         )
 
-        enqueued = JobRun(
+        running = JobRun(
             job_run_id="run-1",
             job_id="job-daily",
+            idempotency_key="job-daily:2026-11-28T10:30:00",
             scheduled_at=dt.datetime(2026, 11, 28, 10, 30, 0, tzinfo=dt.UTC),
-            status="QUEUED",
+            started_at=dt.datetime(2026, 11, 28, 10, 30, 0, tzinfo=dt.UTC),
+            status="RUNNING",
         )
 
         # 两个记录的状态应不同
-        assert missed.status != enqueued.status
+        assert missed.status != running.status
         assert missed.status == "MISSED"
-        assert enqueued.status == "QUEUED"
+        assert running.status == "RUNNING"
 
     def test_missed_indication_in_job_run_records(self):
         """job_runs 表应能区分 MISSED 记录。"""
         # 验证 job_runs 模型支持 status='MISSED'
-        # 这由模型定义保证（status 字段是枚举或字符串）
+        # 这由模型定义保证（status 字段的 CHECK 约束）
 
-        from aicrypto.infrastructure.database.models.scheduler import JobRun
-
-        # 任何 JobRun 都可以设置 status='MISSED'
-        run = JobRun(status="MISSED")
+        run = JobRun(
+            job_run_id="missed-1",
+            job_id="job-daily",
+            idempotency_key="job-daily:2026-11-28T10:00:00",
+            scheduled_at=dt.datetime(2026, 11, 28, 10, 0, 0, tzinfo=dt.UTC),
+            started_at=dt.datetime(2026, 11, 28, 12, 0, 0, tzinfo=dt.UTC),
+            status="MISSED",
+        )
         assert run.status == "MISSED"
+
