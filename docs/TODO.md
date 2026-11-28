@@ -18,6 +18,10 @@
 > 并新增 **45 项**测试（模型调用层 23 + 报告转换层 20 + 端到端 2）。
 > 后端测试 **1113 passed / 1 skipped**，
 > 反向验证 **47/47 通过**。
+> **2026-11-28 核对更新**：P5 调度层主体（三表、补跑、分布式锁、异动定时化、日报 DEEP）已落地；
+> P6 去重 / 冷却已接入真实链路（`anomaly_runner` → `notification_dispatch` → `mark_delivered`）；
+> `NOTIFY_DEDUP_TTL_SECONDS` / `NOTIFY_COOLDOWN_*` 已接线；`SCHEDULER_LOCK_MODE` 白名单已清理。
+> 此前文档中"APScheduler 未使用""调度表待建""去重由调用方注入"等描述已过时，以本次为准。
 >
 > **遗留问题（已确认存在但未修复）单独记录在 [`docs/遗留问题.md`](遗留问题.md)**，
 > 本清单只列任务级待办。
@@ -347,12 +351,9 @@
 
 ## P5：调度与运行层（Phase 3A，M3）
 
-- [ ] 接入 APScheduler（依赖已声明但未使用）
-      ——`pyproject.toml` 声明了 `apscheduler>=3.10`，**全仓零 import**
-      （与 L-19 / L-20 / L-21 同型的「声明未消费」，第 8 次）。
-      计划并入 P5 调度层落地。
-      **已列入 `DEFAULT_WHITELIST`**（附原因与计划阶段）——
-      CI 会盯着它是否过期，一旦接入即报错要求删掉白名单条目
+- [x] 接入 APScheduler
+      ——`services/scheduler_daemon.py` 已使用 APScheduler 注册间隔任务（异动扫描等）。
+      此前"全仓零 import / 待接入"的记录已过时。
 - [x] **依赖声明 vs 实际 import 对账进 CI**（L-26 的机制化对策，L-30 已落地）
       ——「声明未消费」已累计出现 **11 次**
       （L-03 / L-07a / L-16 / L-18 / L-19 / L-20 / L-21 / L-23 / L-26 / L-29
@@ -378,8 +379,9 @@
       「单 Agent 单次最大 token」上限（PRD 24.2），
       见 `services/llm_agent.py`。
       **白名单条目已删除**——CI 已确认它被真实消费
-- [ ] 建立 `scheduled_jobs`、`job_runs`、`job_locks` 表与迁移（PRD 23.3）
-- [ ] 定时综合分析（1h）与日报复盘
+- [x] 建立 `scheduled_jobs`、`job_runs`、`job_locks` 表与迁移（PRD 23.3）
+      ——模型见 `infrastructure/database/models/scheduler.py`，迁移 `0008_scheduler_tables.py`
+- [x] 定时综合分析（1h）与日报复盘（`config/base.toml` 已配置）
   - [x] 日报走 DEEP 档：`analysis_daily` 入队 `trigger=RETROSPECTIVE`，
         `tier_for_trigger` 解析为 DEEP（PRD 24.3）。其余定时任务保持 `SCHEDULED`/STANDARD。
         见 `services/scheduler_enqueue.py`，单测 `TestTriggerForJob`（含注入缺陷反向验证）。
@@ -390,15 +392,18 @@
   - 已在真实环境验证：守护进程按 60s 触发 1 次，结果 `COMPLETE`，扫描后锁已释放。
   - 仍待验证：长期（数小时）稳定运行；异动事件真实落库与投递。
   - 已从依赖审计白名单移除 `ANOMALY_SCAN_INTERVAL_SECONDS`。
-- [ ] 补跑机制：错过任务记录为 `MISSED`，补跑标记 `BACKFILL`，不占实时配额
+- [x] 补跑机制：错过任务记录为 `MISSED`，补跑标记 `BACKFILL`（`services/scheduler_core.py`，测试 `test_scheduler_missed.py`）
 - [ ] 关机恢复：优先补数据，再生成当前分析（PRD 20.2 第 12 条）
-- [ ] 幂等与任务锁
+- [x] 幂等与任务锁（`services/scheduler_lock.py`，同一 `job_id` 不并发）
 - [ ] 验收：连续 3 天定时分析按时产出，展示结论变化与昨日复盘
 
 ## P6：通知渠道（Phase 3A/3B，飞书优先）
 
-- [ ] 飞书渠道连通性验证，确认是否需要签名校验（PRD 28.2 第 1 项）
-- [ ] 将 Redis 去重、冷却、配额接入真实运行链路（`anomaly_scan.py` 目前由调用方注入）
+- [x] 飞书渠道连通性验证（测试消息业务码 `0`，延迟 474ms）
+- [x] 飞书签名校验：`FEISHU_SECRET` 已在 `.env` 配置
+      ——上线前需确认飞书机器人后台的签名开关与之一致（未在后台核实）
+- [x] 将 Redis 去重、冷却接入真实运行链路（`anomaly_runner` 读取冷却键，投递成功后经 `notification_dispatch` 写入；`NOTIFY_DEDUP_TTL_SECONDS` / `NOTIFY_COOLDOWN_*` 已接线）
+- [ ] Redis 配额计数接入真实链路（`NOTIFY_DAILY_QUOTA` 仍未消费）
 - [ ] 三级配额模型：账户级、规则级、渠道级（PRD 22.4.4.2）
 - [ ] 去重键 `(fingerprint, revision)` 与 AI 解读升级投递（PRD 22.4.4.1）
 - [ ] 合并等待窗口 30s
@@ -417,7 +422,7 @@
 - [ ] 重叠预测窗口去重（重叠 > 50%）
 
 **追踪与生命周期**
-- [ ] 建立 `signals`、`predictions` 表与迁移（PRD 第 30.5 节）
+- [ ] 建立 `signals`、`predictions` 表与迁移（PRD 第 30.5 节）（2026-11-28 核对：代码与迁移中均不存在）
 - [ ] 分析报告登记 `prediction_ids`
 - [ ] 到期自动判定对错
 - [ ] 全量 Shadow Tracking，避免只评估成交信号（PRD 17）
@@ -463,7 +468,7 @@
 - [ ] 密钥轮换流程（PRD 34.9）
 - [ ] 工具权限矩阵与 Tool Gateway（PRD 10.5、34.8）
 - [ ] 备份策略与保留策略（PRD 27.3、37.7）
-      —— 保留策略的**执行部分**见 L-03 / L-04
+      —— 保留策略的**执行部分**见 L-03 / L-04（2026-11-28 核对：`RETENTION_ENABLED` 与 `MARKET_TRADE_RETENTION_DAYS` 仍无消费方）
 - [ ] 核对 `.env` 不入库（`.gitignore`）
 - [ ] 指标埋点覆盖业务侧调用（PRD 37.2）
 - [ ] 日志脱敏校验（`common/redaction.py`）
@@ -472,7 +477,8 @@
 ## P10：数据库迁移补齐
 
 - [ ] 核对 PRD 第 30.9 节完整表清单，补齐缺失表
-- [ ] 待建表：`scheduled_jobs`、`job_runs`、`job_locks`、`signals`、`predictions`、`anomaly_evaluations`、`notification_templates`、`notification_channel_state`
+- [x] 调度表 `scheduled_jobs`、`job_runs`、`job_locks` 已建（`0008_scheduler_tables`）
+- [ ] 待建表：`signals`、`predictions`、`anomaly_evaluations`、`notification_templates`、`notification_channel_state`
       （`model_pricing` 已于 `0006_model_pricing` 建立）
 - [ ] 核对已有表与 PRD 第 30 章字段、索引、CHECK 约束一致
 
