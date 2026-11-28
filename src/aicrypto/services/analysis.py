@@ -93,6 +93,7 @@ def create_run(
     trigger: str,
     now: dt.datetime,
     idempotency_key: str | None = None,
+    analysis_mode: str = "LIVE",
 ) -> dict[str, Any]:
     fields = {"symbol": symbol.strip().upper(), "market_type": market_type, "trigger": trigger}
     statement = (
@@ -102,6 +103,7 @@ def create_run(
             analysis_id=new_analysis_id(),
             **fields,
             idempotency_key=idempotency_key,
+            analysis_mode=analysis_mode,
             created_at=now,
         )
         .on_conflict_do_nothing(index_elements=[AnalysisRunRecord.idempotency_key])
@@ -111,7 +113,8 @@ def create_run(
         run = db.scalars(
             select(AnalysisRunRecord).where(AnalysisRunRecord.idempotency_key == idempotency_key)
         ).one()
-        if any(getattr(run, key) != value for key, value in fields.items()):
+        expected = {**fields, "analysis_mode": analysis_mode}
+        if any(getattr(run, key) != value for key, value in expected.items()):
             raise AICryptoError(ErrorCode.COMMON_IDEMPOTENCY_KEY_REUSED)
     return _run_payload(run)
 

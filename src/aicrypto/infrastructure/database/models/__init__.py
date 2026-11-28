@@ -6,7 +6,8 @@ from aicrypto.infrastructure.database.models import (
     market,
     notification,
     report,
+    scheduler,
     system,
 )
 
-__all__ = ["analysis", "anomaly", "market", "notification", "report", "system"]
+__all__ = ["analysis", "anomaly", "market", "notification", "report", "scheduler", "system"]
